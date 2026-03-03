@@ -24,8 +24,14 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
     expectedState = state;
     const oauthClient = createOAuth2Client();
     let timeoutId: ReturnType<typeof setTimeout>;
+    let settled = false;
 
     httpServer = createServer(async (req, res) => {
+      if (settled) {
+        res.writeHead(400);
+        res.end('Authorization already completed.');
+        return;
+      }
       const url = new URL(req.url || '/', 'http://localhost:8080');
       if (url.pathname !== '/oauth/callback') {
         res.writeHead(404);
@@ -76,11 +82,13 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<html><body><h2>Authenticated as ${escapeHtml(accountData.name)} (${escapeHtml(accountData.email)})</h2><p>You can close this tab.</p></body></html>`);
 
+        settled = true;
         resolve(accountData);
       } catch (err) {
         console.error('OAuth authentication failed:', err);
         res.writeHead(500);
         res.end('Authentication failed. Please try again.');
+        settled = true;
         reject(err);
       } finally {
         expectedState = null;

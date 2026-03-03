@@ -145,7 +145,7 @@ export function register(
     const docs = google.docs({ version: 'v1', auth });
     const { data: doc } = await docs.documents.get({ documentId });
 
-    const text = docsToText(doc.body);
+    const text = doc.body ? docsToText(doc.body) : '';
 
     return ok(`Title: ${doc.title}\n\n${text}`);
   });

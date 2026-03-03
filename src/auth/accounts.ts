@@ -75,6 +75,7 @@ export async function deleteAccount(email: string): Promise<boolean> {
     const fpath = join(getAccountsDir(), emailToFilename(email));
     await unlink(fpath);
     clientCache.delete(email);
+    pendingClients.delete(email);
     return true;
   } catch {
     return false;
@@ -95,7 +96,11 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     if (accounts.length === 0) {
       throw new Error('No accounts configured. Use google_accounts_auth_start to add one.');
     }
-    accounts.sort((a, b) => new Date(b.last_used).getTime() - new Date(a.last_used).getTime());
+    accounts.sort((a, b) => {
+      const timeA = a.last_used ? new Date(a.last_used).getTime() : 0;
+      const timeB = b.last_used ? new Date(b.last_used).getTime() : 0;
+      return (Number.isFinite(timeB) ? timeB : 0) - (Number.isFinite(timeA) ? timeA : 0);
+    });
     resolvedEmail = accounts[0].email;
   }
 
@@ -119,7 +124,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     client.setCredentials({
       access_token: acct.token.access_token,
       refresh_token: acct.token.refresh_token,
-      expiry_date: new Date(acct.token.expiry).getTime(),
+      expiry_date: acct.token.expiry ? new Date(acct.token.expiry).getTime() || undefined : undefined,
     });
 
     // Persist refreshed tokens to disk
