@@ -63,6 +63,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         if (!profile.email) {
           res.writeHead(400);
           res.end('Could not retrieve email from user profile.');
+          settled = true;
           reject(new Error('Missing email in user profile'));
           return;
         }
@@ -73,6 +74,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         if (!accountData.token.refresh_token) {
           res.writeHead(400);
           res.end('No refresh token available. Please revoke access and re-authorize.');
+          settled = true;
           reject(new Error('No refresh token obtained'));
           return;
         }
@@ -107,7 +109,8 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
     httpServer.listen(8080, '127.0.0.1');
 
     timeoutId = setTimeout(() => {
-      if (httpServer) {
+      if (httpServer && !settled) {
+        settled = true;
         expectedState = null;
         stopCallbackServer();
         reject(new Error('OAuth callback timed out after 5 minutes'));
