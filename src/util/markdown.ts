@@ -66,7 +66,7 @@ export function docsToText(body: any): string {
               }
             }
           }
-          cells.push(cellText.trim());
+          cells.push(cellText.trim().replace(/\|/g, '\\|'));
         }
         lines.push('| ' + cells.join(' | ') + ' |');
         if (isFirstRow) {

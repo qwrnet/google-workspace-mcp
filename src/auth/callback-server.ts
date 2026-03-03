@@ -3,22 +3,25 @@ import { URL } from 'node:url';
 import { google } from 'googleapis';
 import { createOAuth2Client } from './oauth.js';
 import { getAccount, saveAccount } from './accounts.js';
+import { buildAccountData } from '../util/token-helper.js';
 import type { TokenFileData } from '../util/types.js';
 
 let httpServer: HttpServer | null = null;
+let expectedState: string | null = null;
 
 function escapeHtml(str: string): string {
   return str.replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 }
 
-export function startCallbackServer(): Promise<TokenFileData> {
+export function startCallbackServer(state: string): Promise<TokenFileData> {
   return new Promise((resolve, reject) => {
     if (httpServer) {
       reject(new Error('Callback server already running'));
       return;
     }
 
+    expectedState = state;
     const oauthClient = createOAuth2Client();
     let timeoutId: ReturnType<typeof setTimeout>;
 
@@ -27,6 +30,13 @@ export function startCallbackServer(): Promise<TokenFileData> {
       if (url.pathname !== '/oauth/callback') {
         res.writeHead(404);
         res.end('Not found');
+        return;
+      }
+
+      const returnedState = url.searchParams.get('state');
+      if (!returnedState || returnedState !== expectedState) {
+        res.writeHead(400);
+        res.end('Invalid or missing state parameter.');
         return;
       }
 
@@ -51,26 +61,15 @@ export function startCallbackServer(): Promise<TokenFileData> {
           return;
         }
 
-        // Preserve existing refresh_token if the new auth didn't return one
         const existingAccount = await getAccount(profile.email).catch(() => null);
-        const refreshToken = tokens.refresh_token || existingAccount?.token.refresh_token || '';
+        const accountData = buildAccountData(tokens, profile, existingAccount);
 
-        const accountData: TokenFileData = {
-          email: profile.email,
-          name: profile.name || '',
-          picture: profile.picture || '',
-          token: {
-            access_token: tokens.access_token || '',
-            token_type: tokens.token_type || 'Bearer',
-            refresh_token: refreshToken,
-            expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : '',
-            expires_in: typeof tokens.expiry_date === 'number'
-              ? Math.floor((tokens.expiry_date - Date.now()) / 1000)
-              : 3600,
-          },
-          last_used: new Date().toISOString(),
-          token_file: '',
-        };
+        if (!accountData.token.refresh_token) {
+          res.writeHead(400);
+          res.end('No refresh token available. Please revoke access and re-authorize.');
+          reject(new Error('No refresh token obtained'));
+          return;
+        }
 
         await saveAccount(accountData);
 
@@ -84,6 +83,7 @@ export function startCallbackServer(): Promise<TokenFileData> {
         res.end('Authentication failed. Please try again.');
         reject(err);
       } finally {
+        expectedState = null;
         clearTimeout(timeoutId);
         stopCallbackServer();
       }
@@ -91,14 +91,16 @@ export function startCallbackServer(): Promise<TokenFileData> {
 
     httpServer.on('error', (err) => {
       clearTimeout(timeoutId);
+      expectedState = null;
       httpServer = null;
       reject(new Error(`Failed to start callback server: ${err.message}`));
     });
 
-    httpServer.listen(8080);
+    httpServer.listen(8080, '127.0.0.1');
 
     timeoutId = setTimeout(() => {
       if (httpServer) {
+        expectedState = null;
         stopCallbackServer();
         reject(new Error('OAuth callback timed out after 5 minutes'));
       }

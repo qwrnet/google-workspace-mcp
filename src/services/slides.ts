@@ -191,7 +191,14 @@ export function register(
     if (!presentationId) return error('Missing required parameter: presentation_id');
 
     const layout = (args.layout as string | undefined) || 'BLANK';
+    const validLayouts = ['BLANK', 'CAPTION_ONLY', 'TITLE', 'TITLE_AND_BODY', 'TITLE_AND_TWO_COLUMNS', 'TITLE_ONLY', 'SECTION_HEADER', 'SECTION_TITLE_AND_DESCRIPTION', 'ONE_COLUMN_TEXT', 'MAIN_POINT', 'BIG_NUMBER'];
+    if (!validLayouts.includes(layout)) {
+      return error(`Invalid layout: ${layout}. Must be one of: ${validLayouts.join(', ')}`);
+    }
     const insertionIndex = args.insertion_index as number | undefined;
+    if (insertionIndex !== undefined && (!Number.isInteger(insertionIndex) || insertionIndex < 0)) {
+      return error('insertion_index must be a non-negative integer');
+    }
 
     const createSlideRequest: Record<string, unknown> = {
       slideLayoutReference: { predefinedLayout: layout },

@@ -1,10 +1,10 @@
 import { google } from 'googleapis';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
-import { createOAuth2Client, getAuthUrl } from '../auth/oauth.js';
+import { createOAuth2Client, getAuthUrl, generateState } from '../auth/oauth.js';
 import { listAccounts, getAccount, saveAccount, deleteAccount } from '../auth/accounts.js';
 import { startCallbackServer } from '../auth/callback-server.js';
-import type { TokenFileData } from '../util/types.js';
+import { buildAccountData } from '../util/token-helper.js';
 
 function ok(text: string): ToolResponse {
   return { content: [{ type: 'text', text }] };
@@ -84,10 +84,11 @@ export function register(
 
   handleCall('google_accounts_auth_start', async () => {
     const client = createOAuth2Client();
-    const url = getAuthUrl(client);
+    const state = generateState();
+    const url = getAuthUrl(client, state);
 
     // Start callback server in the background — don't await
-    startCallbackServer().catch(() => {
+    startCallbackServer(state).catch(() => {
       // Callback server errors are non-fatal; user can use auth_callback manually
     });
 
@@ -112,33 +113,24 @@ export function register(
     oauthClient.setCredentials(tokens);
 
     const oauth2 = google.oauth2({ version: 'v2', auth: oauthClient });
-    const { data: profile } = await oauth2.userinfo.get();
+    let profile;
+    try {
+      const { data } = await oauth2.userinfo.get();
+      profile = data;
+    } catch (err) {
+      return error(`Failed to retrieve user profile: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
 
     if (!profile.email) {
       return error('Could not retrieve email from user profile. Ensure the email scope is authorized.');
     }
 
-    // Preserve existing refresh_token if the new auth didn't return one
     const existingAccount = await getAccount(profile.email).catch(() => null);
-    const refreshToken = tokens.refresh_token || existingAccount?.token.refresh_token || '';
+    const accountData = buildAccountData(tokens, profile, existingAccount);
 
-    const accountData: TokenFileData = {
-      email: profile.email,
-      name: profile.name || '',
-      picture: profile.picture || '',
-      token: {
-        access_token: tokens.access_token || '',
-        token_type: tokens.token_type || 'Bearer',
-        refresh_token: refreshToken,
-        expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : '',
-        expires_in:
-          typeof tokens.expiry_date === 'number'
-            ? Math.floor((tokens.expiry_date - Date.now()) / 1000)
-            : 3600,
-      },
-      last_used: new Date().toISOString(),
-      token_file: '',
-    };
+    if (!accountData.token.refresh_token) {
+      return error('No refresh token obtained. Try revoking access at https://myaccount.google.com/permissions and re-authorizing.');
+    }
 
     await saveAccount(accountData);
 

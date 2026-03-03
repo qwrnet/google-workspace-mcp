@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { google } from 'googleapis';
 import type { OAuth2Client } from '../util/types.js';
 
@@ -24,10 +25,15 @@ export function createOAuth2Client(): OAuth2Client {
   return new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
 }
 
-export function getAuthUrl(client: OAuth2Client): string {
+export function generateState(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function getAuthUrl(client: OAuth2Client, state: string): string {
   return client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
     prompt: 'consent',
+    state,
   });
 }

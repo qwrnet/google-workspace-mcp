@@ -77,8 +77,12 @@ export const tools: Tool[] = [
   },
 ];
 
-function buildDateTimeField(value: string): { dateTime: string; timeZone: string } | { date: string } {
+function buildDateTimeField(value: string): { dateTime: string; timeZone?: string } | { date: string } {
   if (value.includes('T')) {
+    // If the value already has a timezone offset or Z, don't inject timeZone
+    if (/(Z|[+-]\d{2}:\d{2}|[+-]\d{4})$/.test(value)) {
+      return { dateTime: value };
+    }
     return { dateTime: value, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
   }
   return { date: value };

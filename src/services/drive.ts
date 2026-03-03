@@ -562,7 +562,7 @@ export function register(
     const drive = google.drive({ version: 'v3', auth });
     const fileId = args.file_id as string | undefined;
     if (!fileId) return error('Missing required parameter: file_id');
-    const permanent = (args.permanent as boolean | undefined) || false;
+    const permanent = typeof args.permanent === 'boolean' ? args.permanent : false;
 
     if (permanent) {
       await drive.files.delete({ fileId });

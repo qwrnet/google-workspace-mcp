@@ -7,7 +7,7 @@ Always create a feature branch off `main` before making changes. Never commit di
 
 ### Before pushing / opening a PR
 1. Run CodeRabbit code review on changes:
-   ```
+   ```text
    /coderabbit:review
    ```
 2. Address any issues found.

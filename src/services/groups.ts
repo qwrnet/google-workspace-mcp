@@ -121,28 +121,33 @@ export function register(
 
     const cloudidentity = google.cloudidentity({ version: 'v1', auth });
 
-    const lookup = await cloudidentity.groups.lookup({ 'groupKey.id': groupEmail });
-    const groupName = lookup.data.name;
-    if (!groupName) return error(`Could not find group: ${groupEmail}`);
+    try {
+      const lookup = await cloudidentity.groups.lookup({ 'groupKey.id': groupEmail });
+      const groupName = lookup.data.name;
+      if (!groupName) return error(`Could not find group: ${groupEmail}`);
 
-    const res = await cloudidentity.groups.memberships.list({
-      parent: groupName,
-      pageSize,
-      pageToken,
-    });
+      const res = await cloudidentity.groups.memberships.list({
+        parent: groupName,
+        pageSize,
+        pageToken,
+      });
 
-    const members = (res.data.memberships || []).map((m) => ({
-      email: m.preferredMemberKey?.id,
-      roles: (m.roles || []).map((r) => r.name),
-      type: m.type,
-    }));
+      const members = (res.data.memberships || []).map((m) => ({
+        email: m.preferredMemberKey?.id,
+        roles: (m.roles || []).map((r) => r.name),
+        type: m.type,
+      }));
 
-    return json({
-      group_email: groupEmail,
-      members,
-      count: members.length,
-      next_page_token: res.data.nextPageToken || null,
-    });
+      return json({
+        group_email: groupEmail,
+        members,
+        count: members.length,
+        next_page_token: res.data.nextPageToken || null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return error(`Failed to get group members: ${msg}`);
+    }
   });
 
   handleCall('google_groups_add_member', async (args) => {
@@ -160,23 +165,31 @@ export function register(
 
     const cloudidentity = google.cloudidentity({ version: 'v1', auth });
 
-    const lookup = await cloudidentity.groups.lookup({ 'groupKey.id': groupEmail });
-    const groupName = lookup.data.name;
-    if (!groupName) return error(`Could not find group: ${groupEmail}`);
+    try {
+      const lookup = await cloudidentity.groups.lookup({ 'groupKey.id': groupEmail });
+      const groupName = lookup.data.name;
+      if (!groupName) return error(`Could not find group: ${groupEmail}`);
 
-    const res = await cloudidentity.groups.memberships.create({
-      parent: groupName,
-      requestBody: {
-        preferredMemberKey: { id: memberEmail },
-        roles: [{ name: role }],
-      },
-    });
+      const res = await cloudidentity.groups.memberships.create({
+        parent: groupName,
+        requestBody: {
+          preferredMemberKey: { id: memberEmail },
+          roles: [{ name: role }],
+        },
+      });
 
-    return json({
-      group_email: groupEmail,
-      member_email: memberEmail,
-      role,
-      membership_name: res.data.name,
-    });
+      // memberships.create returns an Operation; extract membership from response
+      const membership = (res.data as any).response || res.data;
+
+      return json({
+        group_email: groupEmail,
+        member_email: memberEmail,
+        role,
+        membership_name: membership.name || res.data.name,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return error(`Failed to add member to group: ${msg}`);
+    }
   });
 }

@@ -11,7 +11,11 @@ const DEFAULT_DIR = join(homedir(), '.google-mcp-accounts');
 const writeLocks = new Map<string, Promise<void>>();
 function withWriteLock(email: string, fn: () => Promise<void>): void {
   const prev = writeLocks.get(email) || Promise.resolve();
-  writeLocks.set(email, prev.then(fn, fn));
+  const next = prev.then(fn, fn).then(
+    () => { if (writeLocks.get(email) === next) writeLocks.delete(email); },
+    () => { if (writeLocks.get(email) === next) writeLocks.delete(email); },
+  );
+  writeLocks.set(email, next);
 }
 
 function getAccountsDir(): string {
@@ -19,6 +23,7 @@ function getAccountsDir(): string {
 }
 
 const clientCache = new Map<string, OAuth2Client>();
+const pendingClients = new Map<string, Promise<OAuth2Client>>();
 
 export async function ensureAccountsDir(): Promise<void> {
   await mkdir(getAccountsDir(), { recursive: true });
@@ -57,9 +62,8 @@ export async function getAccount(email: string): Promise<TokenFileData | null> {
 export async function saveAccount(data: TokenFileData): Promise<void> {
   await ensureAccountsDir();
   const fpath = join(getAccountsDir(), emailToFilename(data.email));
-  data.token_file = fpath;
-  data.last_used = new Date().toISOString();
-  await writeFile(fpath, JSON.stringify(data, null, 2), { mode: 0o600 });
+  const toWrite = { ...data, token_file: fpath, last_used: new Date().toISOString() };
+  await writeFile(fpath, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
 }
 
 export async function deleteAccount(email: string): Promise<boolean> {
@@ -77,6 +81,7 @@ export async function deleteAccount(email: string): Promise<boolean> {
  * Returns an authenticated OAuth2Client for the given account email.
  * If no email is provided, uses the most recently used account.
  * Clients are cached in memory and auto-persist refreshed tokens.
+ * Concurrent calls for the same email await the same client creation.
  */
 export async function getAuthClient(email?: string): Promise<OAuth2Client> {
   let resolvedEmail = email;
@@ -91,50 +96,57 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
   }
 
   if (clientCache.has(resolvedEmail)) {
-    const acct = await getAccount(resolvedEmail);
-    if (acct) {
-      acct.last_used = new Date().toISOString();
-      await saveAccount(acct);
-    }
     return clientCache.get(resolvedEmail)!;
   }
 
-  const acct = await getAccount(resolvedEmail);
-  if (!acct) {
-    throw new Error(`Account not found: ${resolvedEmail}`);
+  // Deduplicate concurrent creation for the same email
+  if (pendingClients.has(resolvedEmail)) {
+    return pendingClients.get(resolvedEmail)!;
   }
 
-  const client = createOAuth2Client();
-  client.setCredentials({
-    access_token: acct.token.access_token,
-    refresh_token: acct.token.refresh_token,
-    expiry_date: new Date(acct.token.expiry).getTime(),
-  });
+  const emailForCreation = resolvedEmail;
+  const promise = (async () => {
+    const acct = await getAccount(emailForCreation);
+    if (!acct) {
+      throw new Error(`Account not found: ${emailForCreation}`);
+    }
 
-  // Persist refreshed tokens to disk
-  const emailForListener = resolvedEmail;
-  client.on('tokens', (tokens: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null }) => {
-    withWriteLock(emailForListener, async () => {
-      try {
-        const current = await getAccount(emailForListener);
-        if (!current) return;
-        if (tokens.access_token) current.token.access_token = tokens.access_token;
-        if (tokens.refresh_token) current.token.refresh_token = tokens.refresh_token;
-        if (tokens.expiry_date) {
-          current.token.expiry = new Date(tokens.expiry_date).toISOString();
-          current.token.expires_in = Math.floor((tokens.expiry_date - Date.now()) / 1000);
-        }
-        await saveAccount(current);
-      } catch (err) {
-        console.error('Failed to persist refreshed tokens:', err);
-      }
+    const client = createOAuth2Client();
+    client.setCredentials({
+      access_token: acct.token.access_token,
+      refresh_token: acct.token.refresh_token,
+      expiry_date: new Date(acct.token.expiry).getTime(),
     });
-  });
 
-  clientCache.set(resolvedEmail, client);
+    // Persist refreshed tokens to disk
+    client.on('tokens', (tokens: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null }) => {
+      withWriteLock(emailForCreation, async () => {
+        try {
+          const current = await getAccount(emailForCreation);
+          if (!current) return;
+          if (tokens.access_token) current.token.access_token = tokens.access_token;
+          if (tokens.refresh_token) current.token.refresh_token = tokens.refresh_token;
+          if (tokens.expiry_date) {
+            current.token.expiry = new Date(tokens.expiry_date).toISOString();
+            current.token.expires_in = Math.floor((tokens.expiry_date - Date.now()) / 1000);
+          }
+          await saveAccount(current);
+        } catch (err) {
+          console.error('Failed to persist refreshed tokens:', err);
+        }
+      });
+    });
 
-  acct.last_used = new Date().toISOString();
-  await saveAccount(acct);
+    clientCache.set(emailForCreation, client);
+    await saveAccount(acct);
 
-  return client;
+    return client;
+  })();
+
+  pendingClients.set(resolvedEmail, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingClients.delete(resolvedEmail);
+  }
 }
