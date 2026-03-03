@@ -23,6 +23,9 @@ export function buildAccountData(
   profile: UserProfile,
   existingAccount: TokenFileData | null,
 ): TokenFileData {
+  if (!tokens.access_token) {
+    throw new Error('Missing access_token in token response');
+  }
   const refreshToken = tokens.refresh_token || existingAccount?.token.refresh_token || '';
   const expiryDate = typeof tokens.expiry_date === 'number' && !isNaN(tokens.expiry_date)
     ? tokens.expiry_date
@@ -33,7 +36,7 @@ export function buildAccountData(
     name: profile.name || '',
     picture: profile.picture || '',
     token: {
-      access_token: tokens.access_token || '',
+      access_token: tokens.access_token,
       token_type: tokens.token_type || 'Bearer',
       refresh_token: refreshToken,
       expiry: expiryDate ? new Date(expiryDate).toISOString() : (existingAccount?.token.expiry || ''),
