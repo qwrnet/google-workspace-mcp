@@ -14,7 +14,7 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/cloud-identity.groups.readonly',
 ];
 
-export const REDIRECT_URI = 'http://127.0.0.1:8080/oauth/callback';
+export const REDIRECT_URI = 'http://127.0.0.1:9876/oauth/callback';
 
 export function createOAuth2Client(): OAuth2Client {
   const clientId = process.env.GOOGLE_CLIENT_ID;

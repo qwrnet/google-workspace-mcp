@@ -32,7 +32,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         res.end('Authorization already completed.');
         return;
       }
-      const url = new URL(req.url || '/', 'http://localhost:8080');
+      const url = new URL(req.url || '/', 'http://localhost:9876');
       if (url.pathname !== '/oauth/callback') {
         res.writeHead(404);
         res.end('Not found');
@@ -106,7 +106,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
       reject(new Error(`Failed to start callback server: ${err.message}`));
     });
 
-    httpServer.listen(8080, '127.0.0.1');
+    httpServer.listen(9876, '127.0.0.1');
 
     timeoutId = setTimeout(() => {
       if (httpServer && !settled) {
