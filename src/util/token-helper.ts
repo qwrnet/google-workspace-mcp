@@ -38,7 +38,7 @@ export function buildAccountData(
       refresh_token: refreshToken,
       expiry: expiryDate ? new Date(expiryDate).toISOString() : (existingAccount?.token.expiry || ''),
       expires_in: expiryDate
-        ? Math.floor((expiryDate - Date.now()) / 1000)
+        ? Math.max(0, Math.floor((expiryDate - Date.now()) / 1000))
         : (existingAccount?.token.expires_in || 0),
     },
     last_used: new Date().toISOString(),

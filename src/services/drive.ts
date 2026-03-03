@@ -473,7 +473,7 @@ export function register(
     const name = args.name as string | undefined;
     const content = args.content as string | undefined;
     if (!name) return error('Missing required parameter: name');
-    if (!content) return error('Missing required parameter: content');
+    if (content === undefined) return error('Missing required parameter: content');
 
     const fileMetadata: Record<string, unknown> = { name };
     if (args.parent_id) {

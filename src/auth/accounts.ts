@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
+import { readdir, readFile, writeFile, mkdir, unlink, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuth2Client } from '../util/types.js';
@@ -64,6 +64,7 @@ export async function saveAccount(data: TokenFileData): Promise<void> {
   const fpath = join(getAccountsDir(), emailToFilename(data.email));
   const toWrite = { ...data, token_file: fpath, last_used: new Date().toISOString() };
   await writeFile(fpath, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
+  await chmod(fpath, 0o600);
 }
 
 export async function deleteAccount(email: string): Promise<boolean> {

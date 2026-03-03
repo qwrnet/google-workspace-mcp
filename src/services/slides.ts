@@ -226,9 +226,11 @@ export function register(
   handleCall('google_slides_update', async (args) => {
     const auth = await getAuth(args.account_email as string | undefined);
     const presentationId = args.presentation_id as string | undefined;
-    const requests = args.requests as Record<string, unknown>[] | undefined;
+    const requests = args.requests;
     if (!presentationId) return error('Missing required parameter: presentation_id');
-    if (!requests || requests.length === 0) return error('Missing required parameter: requests');
+    if (!Array.isArray(requests) || requests.length === 0 || !requests.every(r => typeof r === 'object' && r !== null && !Array.isArray(r))) {
+      return error('Missing or invalid parameter: requests must be a non-empty array of request objects');
+    }
 
     const slides = google.slides({ version: 'v1', auth });
     const res = await slides.presentations.batchUpdate({
