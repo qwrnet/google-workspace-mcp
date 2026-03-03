@@ -30,7 +30,10 @@ export async function ensureAccountsDir(): Promise<void> {
 }
 
 export function emailToFilename(email: string): string {
-  return email.replace(/@/g, '_at_').replace(/\./g, '_') + '.json';
+  const safe = email.normalize('NFC').replace(/[^a-zA-Z0-9._@-]/g, '_').replace(/@/g, '_at_').replace(/\./g, '_');
+  const result = safe.replace(/\.\./g, '_').slice(0, 200);
+  if (!result) return 'unknown.json';
+  return result + '.json';
 }
 
 export async function listAccounts(): Promise<TokenFileData[]> {
@@ -127,9 +130,12 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
           if (!current) return;
           if (tokens.access_token) current.token.access_token = tokens.access_token;
           if (tokens.refresh_token) current.token.refresh_token = tokens.refresh_token;
-          if (tokens.expiry_date) {
-            current.token.expiry = new Date(tokens.expiry_date).toISOString();
-            current.token.expires_in = Math.floor((tokens.expiry_date - Date.now()) / 1000);
+          if (tokens.expiry_date !== undefined && tokens.expiry_date !== null) {
+            const ts = Number(tokens.expiry_date);
+            if (Number.isFinite(ts)) {
+              current.token.expiry = new Date(ts).toISOString();
+              current.token.expires_in = Math.max(0, Math.floor((ts - Date.now()) / 1000));
+            }
           }
           await saveAccount(current);
         } catch (err) {

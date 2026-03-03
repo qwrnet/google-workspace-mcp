@@ -15,6 +15,12 @@ function error(msg: string): ToolResponse {
   return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
 }
 
+function clampPageSize(value: unknown, defaultSize: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return defaultSize;
+  return Math.min(Math.max(1, n), 1000);
+}
+
 export const tools: Tool[] = [
   {
     name: 'google_drive_list',
@@ -402,7 +408,7 @@ export function register(
 
     const res = await drive.files.list({
       q: (args.query as string | undefined) || undefined,
-      pageSize: (args.page_size as number | undefined) || 20,
+      pageSize: clampPageSize(args.page_size, 20),
       pageToken: (args.page_token as string | undefined) || undefined,
       fields: 'files(id,name,mimeType,modifiedTime,size,parents),nextPageToken',
     });
@@ -471,9 +477,9 @@ export function register(
     const auth = await getAuth(args.account_email as string | undefined);
     const drive = google.drive({ version: 'v3', auth });
     const name = args.name as string | undefined;
-    const content = args.content as string | undefined;
+    const content = args.content;
     if (!name) return error('Missing required parameter: name');
-    if (content === undefined) return error('Missing required parameter: content');
+    if (content === undefined || typeof content !== 'string') return error('Missing required parameter: content');
 
     const fileMetadata: Record<string, unknown> = { name };
     if (args.parent_id) {
@@ -540,9 +546,9 @@ export function register(
     const auth = await getAuth(args.account_email as string | undefined);
     const drive = google.drive({ version: 'v3', auth });
     const fileId = args.file_id as string | undefined;
-    const content = args.content as string | undefined;
+    const content = args.content;
     if (!fileId) return error('Missing required parameter: file_id');
-    if (content === undefined) return error('Missing required parameter: content');
+    if (content === undefined || typeof content !== 'string') return error('Missing required parameter: content');
 
     const res = await drive.files.update({
       fileId,
@@ -625,7 +631,7 @@ export function register(
 
     const res = await drive.files.list({
       q: `fullText contains '${query.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' ')}'`,
-      pageSize: (args.page_size as number | undefined) || 20,
+      pageSize: clampPageSize(args.page_size, 20),
       fields: 'files(id,name,mimeType,modifiedTime,size,parents),nextPageToken',
     });
 
@@ -719,7 +725,7 @@ export function register(
 
     const res = await drive.comments.list({
       fileId,
-      pageSize: (args.page_size as number | undefined) || 20,
+      pageSize: clampPageSize(args.page_size, 20),
       fields: 'comments(id,content,author,createdTime,resolved),nextPageToken',
     });
 

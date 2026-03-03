@@ -70,8 +70,9 @@ export const tools: Tool[] = [
           description: "Predefined layout for the new slide (e.g. 'BLANK', 'TITLE', 'TITLE_AND_BODY'). Defaults to 'BLANK'.",
         },
         insertion_index: {
-          type: 'number',
-          description: 'Zero-based index where the slide should be inserted. Appended at the end if not specified.',
+          type: 'integer',
+          minimum: 0,
+          description: 'Zero-based non-negative integer index where the slide should be inserted. Appended at the end if not specified.',
         },
         account_email: {
           type: 'string',
@@ -114,10 +115,10 @@ export function register(
   getAuth: GetAuthClient,
 ): void {
   handleCall('google_slides_get', async (args) => {
-    const auth = await getAuth(args.account_email as string | undefined);
     const presentationId = args.presentation_id as string | undefined;
     if (!presentationId) return error('Missing required parameter: presentation_id');
 
+    const auth = await getAuth(args.account_email as string | undefined);
     const slides = google.slides({ version: 'v1', auth });
     const res = await slides.presentations.get({ presentationId });
 
@@ -138,9 +139,10 @@ export function register(
   });
 
   handleCall('google_slides_create', async (args) => {
-    const auth = await getAuth(args.account_email as string | undefined);
     const title = args.title as string | undefined;
     if (!title) return error('Missing required parameter: title');
+
+    const auth = await getAuth(args.account_email as string | undefined);
 
     const parentId = args.parent_id as string | undefined;
 
@@ -186,7 +188,6 @@ export function register(
   });
 
   handleCall('google_slides_add_slide', async (args) => {
-    const auth = await getAuth(args.account_email as string | undefined);
     const presentationId = args.presentation_id as string | undefined;
     if (!presentationId) return error('Missing required parameter: presentation_id');
 
@@ -200,6 +201,7 @@ export function register(
       return error('insertion_index must be a non-negative integer');
     }
 
+    const auth = await getAuth(args.account_email as string | undefined);
     const createSlideRequest: Record<string, unknown> = {
       slideLayoutReference: { predefinedLayout: layout },
     };
@@ -224,7 +226,6 @@ export function register(
   });
 
   handleCall('google_slides_update', async (args) => {
-    const auth = await getAuth(args.account_email as string | undefined);
     const presentationId = args.presentation_id as string | undefined;
     const requests = args.requests;
     if (!presentationId) return error('Missing required parameter: presentation_id');
@@ -232,6 +233,7 @@ export function register(
       return error('Missing or invalid parameter: requests must be a non-empty array of request objects');
     }
 
+    const auth = await getAuth(args.account_email as string | undefined);
     const slides = google.slides({ version: 'v1', auth });
     const res = await slides.presentations.batchUpdate({
       presentationId,
