@@ -1,0 +1,27 @@
+{
+  "name": "google-workspace-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Google Workspace APIs",
+  "private": true,
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "google-workspace-mcp": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "tsc --watch"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
