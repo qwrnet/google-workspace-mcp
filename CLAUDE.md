@@ -6,12 +6,12 @@
 Always create a feature branch off `main` before making changes. Never commit directly to `main`. Use descriptive branch names (e.g., `feat/auth-oauth`, `fix/token-refresh`).
 
 ### Before pushing / opening a PR
-1. Run CodeRabbit code review on changes:
-   ```text
-   /coderabbit:review
+1. Run a local Codex review on changes:
+   ```bash
+   codex review --base main
    ```
 2. Address any issues found.
-3. Re-run CodeRabbit review. Repeat until there are zero issues.
+3. Re-run the Codex review. Repeat until there are zero issues.
 4. Push the branch and open a PR against `main`.
 
 ### Agent Teams
