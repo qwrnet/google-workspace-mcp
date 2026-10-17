@@ -75,7 +75,39 @@ export const tools: Tool[] = [
       required: ['event_id'],
     },
   },
+  {
+    name: 'google_calendar_delete_event',
+    description:
+      'Delete an event from a Google Calendar. Fetches the event first and reports its title and start. ' +
+      'Not found or already deleted (404/410) and no permission (403: not the organizer, or a read-only ' +
+      'calendar) come back as readable errors. Events Gmail created from emails (eventType "fromGmail") ' +
+      'may refuse API changes; if Google refuses, say to remove it in the Calendar app.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        event_id: { type: 'string', description: 'The event ID to delete' },
+        calendar_id: { type: 'string', description: 'Calendar ID (defaults to "primary")' },
+        send_updates: {
+          type: 'string',
+          enum: ['all', 'externalOnly', 'none'],
+          description: 'Whether to email guests about the cancellation (defaults to "none")',
+        },
+        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+      },
+      required: ['event_id'],
+    },
+  },
 ];
+
+/** The HTTP status of a googleapis error, if it has one. */
+function statusOf(err: unknown): number | undefined {
+  const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown } };
+  for (const value of [e?.response?.status, e?.status, e?.code]) {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && /^\d{3}$/.test(value)) return Number(value);
+  }
+  return undefined;
+}
 
 function buildDateTimeField(value: string): { dateTime: string; timeZone?: string } | { date: string } {
   if (value.includes('T')) {
@@ -164,6 +196,51 @@ export function register(
       start: created.start,
       end: created.end,
       htmlLink: created.htmlLink,
+    });
+  });
+
+  handleCall('google_calendar_delete_event', async (args) => {
+    const auth = await getAuth(args.account_email as string | undefined);
+    const eventId = args.event_id as string | undefined;
+    if (!eventId) return error('Missing required parameter: event_id');
+    const calendarId = (args.calendar_id as string) || 'primary';
+    const sendUpdates = (args.send_updates as string) || 'none';
+    if (!['all', 'externalOnly', 'none'].includes(sendUpdates)) {
+      return error('send_updates must be one of all, externalOnly, none');
+    }
+    const calendar = google.calendar({ version: 'v3', auth });
+
+    let existing;
+    try {
+      ({ data: existing } = await calendar.events.get({ calendarId, eventId }));
+    } catch (err) {
+      const status = statusOf(err);
+      if (status === 404 || status === 410) return error(`Event ${eventId} was not found (already deleted?)`);
+      if (status === 403) return error(`No permission to read event ${eventId} on calendar ${calendarId}`);
+      throw err;
+    }
+    if (existing.status === 'cancelled') return error(`Event ${eventId} is already deleted`);
+
+    try {
+      await calendar.events.delete({ calendarId, eventId, sendUpdates });
+    } catch (err) {
+      const status = statusOf(err);
+      if (status === 404 || status === 410) return error(`Event ${eventId} was not found (already deleted?)`);
+      if (status === 403 || status === 400) {
+        const gmail = existing.eventType === 'fromGmail'
+          ? ' It was created by Gmail from an email; remove it in the Calendar app instead.'
+          : ' Only the organizer can delete it, and the calendar must be writable.';
+        return error(`Google refused to delete "${existing.summary ?? eventId}" (${status}).${gmail}`);
+      }
+      throw err;
+    }
+    return json({
+      deleted: true,
+      id: eventId,
+      summary: existing.summary,
+      start: existing.start,
+      eventType: existing.eventType,
+      sendUpdates,
     });
   });
 
