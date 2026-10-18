@@ -128,6 +128,7 @@ After restarting Claude Code, use the `google_accounts_auth_start` tool to begin
 | `google_calendar_list_events` | List events with time range filter |
 | `google_calendar_create_event` | Create an event with attendees |
 | `google_calendar_update_event` | Update an existing event |
+| `google_calendar_delete_event` | Delete an event (reports its title and start; readable not-found and permission errors; guests not emailed unless `send_updates` says so) |
 
 ### Slides (4)
 
