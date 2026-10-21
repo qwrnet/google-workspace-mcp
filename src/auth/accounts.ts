@@ -1,4 +1,5 @@
-import { readdir, readFile, writeFile, mkdir, unlink, chmod, stat } from 'node:fs/promises';
+import { readdir, readFile, writeFile, mkdir, unlink, chmod, stat, rename } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuth2Client } from '../util/types.js';
@@ -58,7 +59,7 @@ async function isStale(email: string, client: OAuth2Client): Promise<boolean> {
   if (mtime === null) return true;
   if (mtime === clientFileMtime.get(email)) return false;
   const acct = await getAccount(email);
-  if (!acct) return true;
+  if (!acct) return false; // unreadable right now; keep the client and look again next call
   if (acct.token.refresh_token !== client.credentials.refresh_token) return true;
   clientFileMtime.set(email, mtime);
   return false;
@@ -117,8 +118,16 @@ export async function saveAccount(data: TokenFileData): Promise<void> {
   await ensureAccountsDir();
   const fpath = join(getAccountsDir(), emailToFilename(data.email));
   const toWrite = { ...data, token_file: fpath, last_used: new Date().toISOString() };
-  await writeFile(fpath, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
-  await chmod(fpath, 0o600);
+  // Write then rename, so readers in this or another process never see a half-written file
+  const tmp = `${fpath}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, fpath);
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
 }
 
 export async function deleteAccount(email: string): Promise<boolean> {

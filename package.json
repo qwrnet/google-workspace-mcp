@@ -12,7 +12,7 @@
     "build": "tsc && chmod +x build/index.js",
     "start": "node build/index.js",
     "dev": "tsc --watch",
-    "test": "vitest run"
+    "test": "node --import ./test/register.mjs --test test/*.test.ts"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -23,7 +23,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.7"
+    "typescript": "^5.7.0"
   }
 }
