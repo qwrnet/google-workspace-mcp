@@ -1,6 +1,6 @@
 {
   "name": "google-workspace-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for Google Workspace APIs",
   "private": true,
   "type": "module",
@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "tsc -p tsconfig.test.json && node --test build-test/test/*.test.js"
   },
   "engines": {
     "node": ">=20.0.0"

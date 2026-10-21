@@ -1,21 +1,24 @@
-import { readdir, readFile, writeFile, mkdir, unlink, chmod } from 'node:fs/promises';
+import { readdir, readFile, writeFile, mkdir, unlink, chmod, stat, rename } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { OAuth2Client } from '../util/types.js';
 import { createOAuth2Client } from './oauth.js';
+import { instrumentClient } from './invocation.js';
 import type { TokenFileData } from '../util/types.js';
 
 const DEFAULT_DIR = join(homedir(), '.google-mcp-accounts');
 
 // Per-account write lock to prevent race conditions in token refresh persistence
 const writeLocks = new Map<string, Promise<void>>();
-function withWriteLock(email: string, fn: () => Promise<void>): void {
+function withWriteLock(email: string, fn: () => Promise<void>): Promise<void> {
   const prev = writeLocks.get(email) || Promise.resolve();
   const next = prev.then(fn, fn).then(
     () => { if (writeLocks.get(email) === next) writeLocks.delete(email); },
     () => { if (writeLocks.get(email) === next) writeLocks.delete(email); },
   );
   writeLocks.set(email, next);
+  return next;
 }
 
 function getAccountsDir(): string {
@@ -23,7 +26,57 @@ function getAccountsDir(): string {
 }
 
 const clientCache = new Map<string, OAuth2Client>();
+// mtime of the account file when we last confirmed the cached client matches it. Left unset
+// at creation, so the first reuse compares tokens even if the file changed while building.
+const clientFileMtime = new Map<string, number>();
 const pendingClients = new Map<string, Promise<OAuth2Client>>();
+
+function accountPath(email: string): string {
+  return join(getAccountsDir(), emailToFilename(email));
+}
+
+async function fileMtime(email: string): Promise<number | null> {
+  try {
+    return (await stat(accountPath(email))).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop the cached client for an account, but only if it is still the one given (when given). */
+function evictClient(email: string, client?: OAuth2Client): void {
+  if (client && clientCache.get(email) !== client) return;
+  clientCache.delete(email);
+  clientFileMtime.delete(email);
+}
+
+/**
+ * True when another process re-authenticated the account since this client was built.
+ * Our own refreshes rewrite the file too (new mtime), but never change the refresh token.
+ */
+async function isStale(email: string, client: OAuth2Client): Promise<boolean> {
+  const mtime = await fileMtime(email);
+  if (mtime === null) return true;
+  if (mtime === clientFileMtime.get(email)) return false;
+  const acct = await getAccount(email);
+  if (!acct) return false; // unreadable right now; keep the client and look again next call
+  if (acct.token.refresh_token !== client.credentials.refresh_token) return true;
+  clientFileMtime.set(email, mtime);
+  return false;
+}
+
+/**
+ * Called after a request failed with invalid_grant. Evicts the client that failed and
+ * re-reads the account file. Returns true when the file holds different tokens (the account
+ * was signed in again, likely by another process), so the call is worth one retry.
+ */
+export async function reloadAfterInvalidGrant(email: string, failed: OAuth2Client): Promise<boolean> {
+  evictClient(email, failed);
+  const acct = await getAccount(email);
+  if (!acct) return false;
+  return acct.token.refresh_token !== failed.credentials.refresh_token
+    || acct.token.access_token !== failed.credentials.access_token;
+}
 
 export async function ensureAccountsDir(): Promise<void> {
   await mkdir(getAccountsDir(), { recursive: true });
@@ -55,8 +108,7 @@ export async function listAccounts(): Promise<TokenFileData[]> {
 
 export async function getAccount(email: string): Promise<TokenFileData | null> {
   try {
-    const fpath = join(getAccountsDir(), emailToFilename(email));
-    return JSON.parse(await readFile(fpath, 'utf-8'));
+    return JSON.parse(await readFile(accountPath(email), 'utf-8'));
   } catch {
     return null;
   }
@@ -66,15 +118,23 @@ export async function saveAccount(data: TokenFileData): Promise<void> {
   await ensureAccountsDir();
   const fpath = join(getAccountsDir(), emailToFilename(data.email));
   const toWrite = { ...data, token_file: fpath, last_used: new Date().toISOString() };
-  await writeFile(fpath, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
-  await chmod(fpath, 0o600);
+  // Write then rename, so readers in this or another process never see a half-written file
+  const tmp = `${fpath}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, fpath);
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
 }
 
 export async function deleteAccount(email: string): Promise<boolean> {
   try {
     const fpath = join(getAccountsDir(), emailToFilename(email));
     await unlink(fpath);
-    clientCache.delete(email);
+    evictClient(email);
     pendingClients.delete(email);
     return true;
   } catch {
@@ -104,8 +164,10 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     resolvedEmail = accounts[0].email;
   }
 
-  if (clientCache.has(resolvedEmail)) {
-    return clientCache.get(resolvedEmail)!;
+  const cached = clientCache.get(resolvedEmail);
+  if (cached) {
+    if (!(await isStale(resolvedEmail, cached))) return cached;
+    evictClient(resolvedEmail, cached);
   }
 
   // Deduplicate concurrent creation for the same email
@@ -127,12 +189,18 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
       expiry_date: acct.token.expiry ? new Date(acct.token.expiry).getTime() || undefined : undefined,
     });
 
-    // Persist refreshed tokens to disk
-    client.on('tokens', (tokens: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null }) => {
+    instrumentClient(client, emailForCreation);
+
+    // Persist refreshed tokens to disk. A client that was replaced after a re-auth keeps
+    // this listener, so it only writes while the file still holds its refresh token.
+    let ownRefreshToken = acct.token.refresh_token;
+    client.on('tokens', (event: { access_token?: string | null; refresh_token?: string | null; expiry_date?: number | null }) => {
+      const tokens = { ...event }; // the library mutates the event object after emitting
       withWriteLock(emailForCreation, async () => {
         try {
           const current = await getAccount(emailForCreation);
           if (!current) return;
+          if (current.token.refresh_token !== ownRefreshToken) return; // signed in again elsewhere
           if (tokens.access_token) current.token.access_token = tokens.access_token;
           if (tokens.refresh_token) current.token.refresh_token = tokens.refresh_token;
           if (tokens.expiry_date !== undefined && tokens.expiry_date !== null) {
@@ -143,6 +211,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
             }
           }
           await saveAccount(current);
+          ownRefreshToken = current.token.refresh_token;
         } catch (err) {
           console.error('Failed to persist refreshed tokens:', err);
         }
@@ -150,7 +219,11 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     });
 
     clientCache.set(emailForCreation, client);
-    await saveAccount(acct);
+    // Bump last_used from the file as it is now, so a re-auth written meanwhile is kept
+    await withWriteLock(emailForCreation, async () => {
+      const current = await getAccount(emailForCreation);
+      if (current) await saveAccount(current);
+    });
 
     return client;
   })();
