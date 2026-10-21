@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import { google } from 'googleapis';
 import { emailToFilename, getAuthClient } from '../src/auth/accounts.js';
-import { createOAuth2Client } from '../src/auth/oauth.js';
 import { withReauthRetry } from '../src/auth/reauth.js';
 import type { ToolResponse } from '../src/util/types.js';
 
@@ -89,7 +88,7 @@ before(async () => {
   process.env.GOOGLE_ACCOUNTS_DIR = dir;
   process.env.GOOGLE_CLIENT_ID = 'id';
   process.env.GOOGLE_CLIENT_SECRET = 'secret';
-  const proto = Object.getPrototypeOf(createOAuth2Client().transporter);
+  const proto = Object.getPrototypeOf(new google.auth.OAuth2().transporter);
   mock.method(proto, 'request', fakeTransport);
 });
 

@@ -7,6 +7,7 @@ A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server t
 - **41 tools** across 8 Google Workspace services
 - **Auto-refreshing tokens** — uses the `googleapis` npm client which handles token refresh transparently
 - **Multi-account support** — authenticate multiple Google accounts, switch between them per-request
+- **Multiple OAuth clients** — accounts from different Workspace orgs can live in one server (see [Multiple OAuth clients](#multiple-oauth-clients))
 - **Backward-compatible** token storage at `~/.google-mcp-accounts/`
 
 ## Prerequisites
@@ -63,15 +64,33 @@ Add to your `~/.claude.json` under `mcpServers`:
 
 After restarting Claude Code, use the `google_accounts_auth_start` tool to begin the OAuth flow. Visit the returned URL in your browser to authorize access.
 
+## Multiple OAuth clients
+
+An OAuth client whose consent screen is **Internal** only accepts users from its own Google Workspace org (others get `Error 403: org_internal`). To use accounts from different orgs in one server, register several named clients in `clients.json` inside the accounts directory (or the file named by `GOOGLE_OAUTH_CLIENTS_FILE`):
+
+```json
+{
+  "work": { "client_id": "...", "client_secret": "..." },
+  "personal": { "file": "~/Downloads/client_secret_personal.json" }
+}
+```
+
+Each entry is either inline credentials or a `file` pointing at the JSON downloaded from Google Cloud Console. Keep the file `chmod 600`; the server warns if it is readable by others.
+
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` still work and act as a client named `default`, so existing setups need no changes. A `default` entry in `clients.json` takes precedence over the env vars.
+- Add an account with `google_accounts_auth_start` and `client: "personal"`. The account records which client issued it and is always refreshed with that client. Accounts saved before this feature are treated as `default`.
+- With no `client` argument, `default` is used, or the only configured client if there is just one. If several are configured and none is named `default`, you must name one.
+- Refresh tokens are only valid for the client that issued them, so re-authorizing an existing account with a different client requires a fresh consent rather than reusing the old token.
+
 ## Tools
 
 ### Accounts (4)
 
 | Tool | Description |
 |------|-------------|
-| `google_accounts_list` | List all configured Google accounts |
-| `google_accounts_auth_start` | Start OAuth2 authentication flow |
-| `google_accounts_auth_callback` | Complete auth with an authorization code |
+| `google_accounts_list` | List all configured Google accounts and the OAuth client each uses |
+| `google_accounts_auth_start` | Start OAuth2 authentication flow (optional `client`) |
+| `google_accounts_auth_callback` | Complete auth with an authorization code (optional `client`) |
 | `google_accounts_remove` | Remove a configured account |
 
 ### Drive (16)
@@ -151,8 +170,11 @@ After restarting Claude Code, use the `google_accounts_auth_start` tool to begin
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 client ID |
-| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 client secret |
+| `GOOGLE_CLIENT_ID` | One of these or `clients.json` | OAuth 2.0 client ID (the `default` client) |
+| `GOOGLE_CLIENT_SECRET` | One of these or `clients.json` | OAuth 2.0 client secret (the `default` client) |
+| `GOOGLE_OAUTH_CLIENTS_FILE` | No | Path to the named-clients file (default: `<accounts dir>/clients.json`) |
+| `GOOGLE_DEFAULT_ACCOUNT` | No | Account used when a tool call omits `account_email` (default: most recently used) |
+| `GOOGLE_OAUTH_PORT` | No | Loopback port for the OAuth callback (default: `9876`); the redirect URI is `http://127.0.0.1:<port>/oauth/callback` |
 | `GOOGLE_ACCOUNTS_DIR` | No | Token storage directory (default: `~/.google-mcp-accounts`) |
 
 ## Architecture

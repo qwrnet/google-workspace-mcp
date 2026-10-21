@@ -1,4 +1,5 @@
 import type { TokenFileData } from './types.js';
+import { DEFAULT_CLIENT_NAME } from '../auth/clients.js';
 
 interface TokenResponse {
   access_token?: string | null;
@@ -22,11 +23,14 @@ export function buildAccountData(
   tokens: TokenResponse,
   profile: UserProfile,
   existingAccount: TokenFileData | null,
+  clientName: string,
 ): TokenFileData {
   if (!tokens.access_token) {
     throw new Error('Missing access_token in token response');
   }
-  const refreshToken = tokens.refresh_token || existingAccount?.token.refresh_token || '';
+  // A refresh token is only valid for the client that issued it, so never carry one across clients.
+  const sameClient = (existingAccount?.client ?? DEFAULT_CLIENT_NAME) === clientName;
+  const refreshToken = tokens.refresh_token || (sameClient ? existingAccount?.token.refresh_token : '') || '';
   const expiryDate = typeof tokens.expiry_date === 'number' && !isNaN(tokens.expiry_date)
     ? tokens.expiry_date
     : null;
@@ -46,5 +50,6 @@ export function buildAccountData(
     },
     last_used: new Date().toISOString(),
     token_file: '',
+    client: clientName,
   };
 }

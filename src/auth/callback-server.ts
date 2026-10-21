@@ -2,6 +2,8 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import { URL } from 'node:url';
 import { google } from 'googleapis';
 import { createOAuth2Client } from './oauth.js';
+import { getCallbackPort } from './config.js';
+import type { ClientCredentials } from './clients.js';
 import { getAccount, saveAccount } from './accounts.js';
 import { buildAccountData } from '../util/token-helper.js';
 import type { TokenFileData } from '../util/types.js';
@@ -14,7 +16,8 @@ function escapeHtml(str: string): string {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 }
 
-export function startCallbackServer(state: string): Promise<TokenFileData> {
+/** Waits for the OAuth redirect; the code is exchanged with the same client that generated the auth URL. */
+export function startCallbackServer(state: string, creds: ClientCredentials): Promise<TokenFileData> {
   return new Promise((resolve, reject) => {
     if (httpServer) {
       reject(new Error('Callback server already running'));
@@ -22,7 +25,8 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
     }
 
     expectedState = state;
-    const oauthClient = createOAuth2Client();
+    const oauthClient = createOAuth2Client(creds);
+    const port = getCallbackPort();
     let timeoutId: ReturnType<typeof setTimeout>;
     let settled = false;
 
@@ -32,7 +36,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         res.end('Authorization already completed.');
         return;
       }
-      const url = new URL(req.url || '/', 'http://localhost:9876');
+      const url = new URL(req.url || '/', `http://localhost:${port}`);
       if (url.pathname !== '/oauth/callback') {
         res.writeHead(404);
         res.end('Not found');
@@ -69,7 +73,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
         }
 
         const existingAccount = await getAccount(profile.email).catch(() => null);
-        const accountData = buildAccountData(tokens, profile, existingAccount);
+        const accountData = buildAccountData(tokens, profile, existingAccount, creds.name);
 
         if (!accountData.token.refresh_token) {
           res.writeHead(400);
@@ -106,7 +110,7 @@ export function startCallbackServer(state: string): Promise<TokenFileData> {
       reject(new Error(`Failed to start callback server: ${err.message}`));
     });
 
-    httpServer.listen(9876, '127.0.0.1');
+    httpServer.listen(port, '127.0.0.1');
 
     timeoutId = setTimeout(() => {
       if (httpServer && !settled) {
