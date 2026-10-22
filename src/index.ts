@@ -11,6 +11,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse } from './util/types.js';
 import { getAuthClient } from './auth/accounts.js';
 import { withReauthRetry } from './auth/reauth.js';
+import { SERVER_INSTRUCTIONS } from './util/account-docs.js';
 
 import * as accountsService from './services/accounts.js';
 import * as driveService from './services/drive.js';
@@ -52,7 +53,7 @@ for (const svc of services) {
 
 const server = new Server(
   { name: 'google-workspace-mcp', version: '0.2.1' },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({

@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
+import { ACCOUNT_EMAIL_DESCRIPTION } from '../util/account-docs.js';
 
 function ok(text: string): ToolResponse {
   return { content: [{ type: 'text', text }] };
@@ -35,7 +36,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use. Defaults to the most recently used account.',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['title'],
@@ -53,7 +54,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use. Defaults to the most recently used account.',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['spreadsheet_id'],
@@ -75,7 +76,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use. Defaults to the most recently used account.',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['spreadsheet_id', 'range'],
@@ -105,7 +106,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use. Defaults to the most recently used account.',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['spreadsheet_id', 'range', 'values'],
@@ -135,7 +136,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use. Defaults to the most recently used account.',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['spreadsheet_id', 'range', 'values'],

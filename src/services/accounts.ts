@@ -25,7 +25,8 @@ function error(msg: string): ToolResponse {
 export const tools: Tool[] = [
   {
     name: 'google_accounts_list',
-    description: 'List all configured Google accounts',
+    description:
+      'List configured Google accounts: email, name, the OAuth client that issued each, and last use. Call this first, and pass one of these emails as account_email to other tools.',
     inputSchema: {
       type: 'object' as const,
       properties: {},

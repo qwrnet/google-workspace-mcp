@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
+import { ACCOUNT_EMAIL_DESCRIPTION } from '../util/account-docs.js';
 import { docsToText } from '../util/markdown.js';
 
 function ok(text: string): ToolResponse {
@@ -25,7 +26,7 @@ export const tools: Tool[] = [
         title: { type: 'string', description: 'Document title' },
         content: { type: 'string', description: 'Initial text content to insert into the document' },
         parent_id: { type: 'string', description: 'Google Drive folder ID to move the document into' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['title'],
     },
@@ -37,7 +38,7 @@ export const tools: Tool[] = [
       type: 'object' as const,
       properties: {
         document_id: { type: 'string', description: 'The Google Doc document ID' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['document_id'],
     },
@@ -54,7 +55,7 @@ export const tools: Tool[] = [
           description: 'Array of batchUpdate request objects, e.g. [{ insertText: { text: "hello", location: { index: 1 } } }]',
           items: { type: 'object' },
         },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['document_id', 'requests'],
     },

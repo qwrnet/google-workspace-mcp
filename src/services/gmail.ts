@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
+import { ACCOUNT_EMAIL_DESCRIPTION } from '../util/account-docs.js';
 
 function ok(text: string): ToolResponse {
   return { content: [{ type: 'text', text }] };
@@ -60,7 +61,7 @@ export const tools: Tool[] = [
         query: { type: 'string', description: 'Gmail search query (e.g. "from:user@example.com is:unread")' },
         max_results: { type: 'number', description: 'Maximum number of messages to return (default 20)' },
         page_token: { type: 'string', description: 'Token for paginating through results' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
     },
   },
@@ -71,7 +72,7 @@ export const tools: Tool[] = [
       type: 'object' as const,
       properties: {
         message_id: { type: 'string', description: 'The Gmail message ID' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['message_id'],
     },
@@ -87,7 +88,7 @@ export const tools: Tool[] = [
         body: { type: 'string', description: 'Plain text email body' },
         cc: { type: 'string', description: 'CC recipient(s)' },
         bcc: { type: 'string', description: 'BCC recipient(s)' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['to', 'subject', 'body'],
     },

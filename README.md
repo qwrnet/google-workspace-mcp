@@ -64,6 +64,12 @@ Add to your `~/.claude.json` under `mcpServers`:
 
 After restarting Claude Code, use the `google_accounts_auth_start` tool to begin the OAuth flow. Visit the returned URL in your browser to authorize access.
 
+## Using multiple accounts
+
+Every tool except the account tools takes an optional `account_email`. When it is omitted, the server uses `GOOGLE_DEFAULT_ACCOUNT` if set, otherwise the most recently used account. With more than one account configured, that fallback can silently act as the wrong account, so pass `account_email` explicitly. Use `google_accounts_list` to see the configured accounts.
+
+The server sends MCP `instructions` at startup that tell agents this: list accounts first, pass `account_email` on every call when there are several, keep one account per task (file, message and event IDs belong to the account that returned them), and pass `client` when adding an account from another Workspace org. The text lives in [`src/util/account-docs.ts`](src/util/account-docs.ts), together with the shared `account_email` description that every tool uses.
+
 ## Multiple OAuth clients
 
 An OAuth client whose consent screen is **Internal** only accepts users from its own Google Workspace org (others get `Error 403: org_internal`). To use accounts from different orgs in one server, register several named clients in `clients.json` inside the accounts directory (or the file named by `GOOGLE_OAUTH_CLIENTS_FILE`):
