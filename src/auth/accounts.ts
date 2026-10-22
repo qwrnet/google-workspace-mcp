@@ -1,13 +1,12 @@
 import { readdir, readFile, writeFile, mkdir, unlink, chmod, stat, rename } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { OAuth2Client } from '../util/types.js';
 import { createOAuth2Client } from './oauth.js';
 import { instrumentClient } from './invocation.js';
+import { resolveClient } from './clients.js';
+import { getAccountsDir } from './config.js';
 import type { TokenFileData } from '../util/types.js';
-
-const DEFAULT_DIR = join(homedir(), '.google-mcp-accounts');
 
 // Per-account write lock to prevent race conditions in token refresh persistence
 const writeLocks = new Map<string, Promise<void>>();
@@ -21,14 +20,30 @@ function withWriteLock(email: string, fn: () => Promise<void>): Promise<void> {
   return next;
 }
 
-function getAccountsDir(): string {
-  return process.env.GOOGLE_ACCOUNTS_DIR || DEFAULT_DIR;
-}
-
 const clientCache = new Map<string, OAuth2Client>();
 // mtime of the account file when we last confirmed the cached client matches it. Left unset
 // at creation, so the first reuse compares tokens even if the file changed while building.
 const clientFileMtime = new Map<string, number>();
+const lastTouched = new Map<string, number>();
+const TOUCH_INTERVAL_MS = 60_000;
+
+/**
+ * Record use of an account so the "most recently used" fallback follows what is
+ * actually being called. Throttled and fire-and-forget to avoid a disk write per call.
+ */
+function touchAccount(email: string): void {
+  const now = Date.now();
+  if (now - (lastTouched.get(email) ?? 0) < TOUCH_INTERVAL_MS) return;
+  lastTouched.set(email, now);
+  withWriteLock(email, async () => {
+    try {
+      const current = await getAccount(email);
+      if (current) await saveAccount(current);
+    } catch (err) {
+      console.error('Failed to update last_used:', err);
+    }
+  });
+}
 const pendingClients = new Map<string, Promise<OAuth2Client>>();
 
 function accountPath(email: string): string {
@@ -48,6 +63,7 @@ function evictClient(email: string, client?: OAuth2Client): void {
   if (client && clientCache.get(email) !== client) return;
   clientCache.delete(email);
   clientFileMtime.delete(email);
+  lastTouched.delete(email);
 }
 
 /**
@@ -98,7 +114,10 @@ export async function listAccounts(): Promise<TokenFileData[]> {
     if (!f.endsWith('.json')) continue;
     try {
       const raw = await readFile(join(dir, f), 'utf-8');
-      accounts.push(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      // The directory also holds clients.json; only accept files shaped like an account.
+      if (typeof parsed?.email !== 'string' || typeof parsed?.token !== 'object' || parsed.token === null) continue;
+      accounts.push(parsed);
     } catch {
       // skip corrupt files
     }
@@ -136,6 +155,7 @@ export async function deleteAccount(email: string): Promise<boolean> {
     await unlink(fpath);
     evictClient(email);
     pendingClients.delete(email);
+    lastTouched.delete(email);
     return true;
   } catch {
     return false;
@@ -144,12 +164,13 @@ export async function deleteAccount(email: string): Promise<boolean> {
 
 /**
  * Returns an authenticated OAuth2Client for the given account email.
- * If no email is provided, uses the most recently used account.
+ * If no email is provided, uses GOOGLE_DEFAULT_ACCOUNT when set, otherwise the most
+ * recently used account. Each account is refreshed with the OAuth client that issued it.
  * Clients are cached in memory and auto-persist refreshed tokens.
  * Concurrent calls for the same email await the same client creation.
  */
 export async function getAuthClient(email?: string): Promise<OAuth2Client> {
-  let resolvedEmail = email;
+  let resolvedEmail = email || process.env.GOOGLE_DEFAULT_ACCOUNT || undefined;
 
   if (!resolvedEmail) {
     const accounts = await listAccounts();
@@ -166,7 +187,10 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
 
   const cached = clientCache.get(resolvedEmail);
   if (cached) {
-    if (!(await isStale(resolvedEmail, cached))) return cached;
+    if (!(await isStale(resolvedEmail, cached))) {
+      touchAccount(resolvedEmail);
+      return cached;
+    }
     evictClient(resolvedEmail, cached);
   }
 
@@ -182,7 +206,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
       throw new Error(`Account not found: ${emailForCreation}`);
     }
 
-    const client = createOAuth2Client();
+    const client = createOAuth2Client(await resolveClient(acct.client));
     client.setCredentials({
       access_token: acct.token.access_token,
       refresh_token: acct.token.refresh_token,
@@ -219,6 +243,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     });
 
     clientCache.set(emailForCreation, client);
+    lastTouched.set(emailForCreation, Date.now());
     // Bump last_used from the file as it is now, so a re-auth written meanwhile is kept
     await withWriteLock(emailForCreation, async () => {
       const current = await getAccount(emailForCreation);

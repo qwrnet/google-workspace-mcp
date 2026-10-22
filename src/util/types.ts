@@ -17,9 +17,11 @@ export interface TokenFileData {
   };
   last_used: string;
   token_file: string;
+  /** Name of the OAuth client that issued this token. Absent on accounts saved before named clients existed. */
+  client?: string;
 }
 
-/** Resolves an account email to an authenticated OAuth2Client. Defaults to most recently used account. */
+/** Resolves an account email to an authenticated OAuth2Client. Defaults to GOOGLE_DEFAULT_ACCOUNT, else the most recently used account. */
 export type GetAuthClient = (accountEmail?: string) => Promise<OAuth2Client>;
 
 /** Standard MCP tool response — index signature needed for MCP SDK compatibility. */
