@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { Readable } from 'node:stream';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
+import { ACCOUNT_EMAIL_DESCRIPTION } from '../util/account-docs.js';
 
 function ok(text: string): ToolResponse {
   return { content: [{ type: 'text', text }] };
@@ -42,7 +43,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
     },
@@ -59,7 +60,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -78,7 +79,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -108,7 +109,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['name', 'content'],
@@ -130,7 +131,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['name'],
@@ -156,7 +157,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -182,7 +183,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id', 'content'],
@@ -204,7 +205,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -230,7 +231,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -252,7 +253,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id', 'new_parent_id'],
@@ -274,7 +275,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['query'],
@@ -305,7 +306,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id', 'email', 'role'],
@@ -327,7 +328,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id', 'permission_id'],
@@ -345,7 +346,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],
@@ -367,7 +368,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id', 'mime_type'],
@@ -389,7 +390,7 @@ export const tools: Tool[] = [
         },
         account_email: {
           type: 'string',
-          description: 'Email of the Google account to use',
+          description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
       required: ['file_id'],

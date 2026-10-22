@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResponse, GetAuthClient } from '../util/types.js';
+import { ACCOUNT_EMAIL_DESCRIPTION } from '../util/account-docs.js';
 
 function ok(text: string): ToolResponse {
   return { content: [{ type: 'text', text }] };
@@ -26,7 +27,7 @@ export const tools: Tool[] = [
         time_max: { type: 'string', description: 'Upper bound (exclusive) for event start time, as ISO 8601 datetime' },
         max_results: { type: 'number', description: 'Maximum number of events to return (default 25)' },
         page_token: { type: 'string', description: 'Token for paginating through results' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
     },
   },
@@ -47,7 +48,7 @@ export const tools: Tool[] = [
           items: { type: 'string' },
         },
         calendar_id: { type: 'string', description: 'Calendar ID (defaults to "primary")' },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['summary', 'start', 'end'],
     },
@@ -70,7 +71,7 @@ export const tools: Tool[] = [
           description: 'New list of attendee email addresses (replaces existing)',
           items: { type: 'string' },
         },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['event_id'],
     },
@@ -92,7 +93,7 @@ export const tools: Tool[] = [
           enum: ['all', 'externalOnly', 'none'],
           description: 'Whether to email guests about the cancellation (defaults to "none")',
         },
-        account_email: { type: 'string', description: 'Google account email to use (defaults to most recently used)' },
+        account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
       required: ['event_id'],
     },
