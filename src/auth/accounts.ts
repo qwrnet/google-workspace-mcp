@@ -46,8 +46,18 @@ function touchAccount(email: string): void {
 }
 const pendingClients = new Map<string, Promise<OAuth2Client>>();
 
+/**
+ * Path of an account's token file. Throws for anything that is not an email, so a bare name
+ * like "clients" can never map onto another file in the directory (e.g. clients.json).
+ */
 function accountPath(email: string): string {
+  if (!email.includes('@')) throw new Error(`Not an account email: ${email}`);
   return join(getAccountsDir(), emailToFilename(email));
+}
+
+function isAccountData(parsed: unknown): parsed is TokenFileData {
+  const p = parsed as Record<string, unknown> | null;
+  return typeof p?.email === 'string' && typeof p.token === 'object' && p.token !== null;
 }
 
 async function fileMtime(email: string): Promise<number | null> {
@@ -116,7 +126,7 @@ export async function listAccounts(): Promise<TokenFileData[]> {
       const raw = await readFile(join(dir, f), 'utf-8');
       const parsed = JSON.parse(raw);
       // The directory also holds clients.json; only accept files shaped like an account.
-      if (typeof parsed?.email !== 'string' || typeof parsed?.token !== 'object' || parsed.token === null) continue;
+      if (!isAccountData(parsed)) continue;
       accounts.push(parsed);
     } catch {
       // skip corrupt files
@@ -127,7 +137,8 @@ export async function listAccounts(): Promise<TokenFileData[]> {
 
 export async function getAccount(email: string): Promise<TokenFileData | null> {
   try {
-    return JSON.parse(await readFile(accountPath(email), 'utf-8'));
+    const parsed = JSON.parse(await readFile(accountPath(email), 'utf-8'));
+    return isAccountData(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -135,7 +146,7 @@ export async function getAccount(email: string): Promise<TokenFileData | null> {
 
 export async function saveAccount(data: TokenFileData): Promise<void> {
   await ensureAccountsDir();
-  const fpath = join(getAccountsDir(), emailToFilename(data.email));
+  const fpath = accountPath(data.email);
   const toWrite = { ...data, token_file: fpath, last_used: new Date().toISOString() };
   // Write then rename, so readers in this or another process never see a half-written file
   const tmp = `${fpath}.${randomBytes(6).toString('hex')}.tmp`;
@@ -151,8 +162,7 @@ export async function saveAccount(data: TokenFileData): Promise<void> {
 
 export async function deleteAccount(email: string): Promise<boolean> {
   try {
-    const fpath = join(getAccountsDir(), emailToFilename(email));
-    await unlink(fpath);
+    await unlink(accountPath(email));
     evictClient(email);
     pendingClients.delete(email);
     lastTouched.delete(email);
