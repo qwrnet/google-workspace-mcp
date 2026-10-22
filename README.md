@@ -1,10 +1,10 @@
 # Google Workspace MCP Server
 
-A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 41 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, and Groups.
+A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 43 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, and Groups.
 
 ## Features
 
-- **41 tools** across 8 Google Workspace services
+- **43 tools** across 8 Google Workspace services
 - **Auto-refreshing tokens** — uses the `googleapis` npm client which handles token refresh transparently
 - **Multi-account support** — authenticate multiple Google accounts, switch between them per-request
 - **Multiple OAuth clients** — accounts from different Workspace orgs can live in one server (see [Multiple OAuth clients](#multiple-oauth-clients))
@@ -138,15 +138,23 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `google_docs_read` | Read document content as text |
 | `google_docs_write` | Write to a document via batchUpdate |
 
-### Gmail (3)
+### Gmail (4)
 
 | Tool | Description |
 |------|-------------|
-| `google_gmail_list` | List/search messages |
-| `google_gmail_read` | Read a message (headers + body) |
+| `google_gmail_list` | List/search messages (`has:attachment` finds ones with files) |
+| `google_gmail_read` | Read a message: headers, plain text body, and its attachments (`part_id`, filename, MIME type, size) |
+| `google_gmail_save_attachment` | Save one attachment to a local file (see below) |
 | `google_gmail_send` | Send an email |
 
-### Calendar (3)
+`google_gmail_save_attachment` takes `message_id`, a `part_id` from `google_gmail_read`, and an absolute `output_path`. It writes the file to disk, so the bytes never pass through the model's context, and returns `{path, filename, mime_type, bytes_written}`. The attachment is found by `part_id` because Gmail issues a new `attachmentId` each time a message is fetched. Rules:
+
+- `output_path` must be absolute and normalized, its parent directory must already exist, and no part of the parent path may be a symlink.
+- An existing file or symlink at `output_path` is never overwritten or followed. The new file has mode `600`.
+- Attachments over 25 MB are refused.
+- If `GOOGLE_ATTACHMENTS_ROOT` is set, `output_path` must be inside it.
+
+### Calendar (4)
 
 | Tool | Description |
 |------|-------------|
@@ -181,6 +189,7 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `GOOGLE_OAUTH_CLIENTS_FILE` | No | Path to the named-clients file (default: `<accounts dir>/clients.json`) |
 | `GOOGLE_DEFAULT_ACCOUNT` | No | Account used when a tool call omits `account_email` (default: most recently used) |
 | `GOOGLE_OAUTH_PORT` | No | Loopback port for the OAuth callback (default: `9876`); the redirect URI is `http://127.0.0.1:<port>/oauth/callback` |
+| `GOOGLE_ATTACHMENTS_ROOT` | No | If set, `google_gmail_save_attachment` only writes inside this directory |
 | `GOOGLE_ACCOUNTS_DIR` | No | Token storage directory (default: `~/.google-mcp-accounts`) |
 
 ## Architecture

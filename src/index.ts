@@ -52,7 +52,7 @@ for (const svc of services) {
 }
 
 const server = new Server(
-  { name: 'google-workspace-mcp', version: '0.2.1' },
+  { name: 'google-workspace-mcp', version: '0.3.0' },
   { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
