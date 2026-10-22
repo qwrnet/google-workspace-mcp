@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, readlink, realpath, stat, unlink, type FileHandle } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, normalize, relative, sep } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, delimiter, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 
 /** Largest attachment google_gmail_save_attachment will write. Gmail itself caps received mail at 25 MB. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -57,14 +58,45 @@ export function findPart(payload: MessagePart | null | undefined, partId: string
 }
 
 /**
- * Checks where an attachment may be written. The path must be absolute and normalized, its
- * parent must be an existing directory reached without symlinks, and when root is given the
- * file must be inside it. Returns an error message, or null when the path is acceptable.
+ * Directories attachments may be written under. The content comes from whoever sent the email
+ * and the path is chosen by the model, which that email may try to steer, so writes are confined
+ * by default: the system temp directory and ~/.cache. GOOGLE_ATTACHMENTS_ROOT replaces these with
+ * its own list (separated like PATH).
  */
-export async function checkOutputPath(outputPath: string, root?: string): Promise<string | null> {
+export function getAttachmentRoots(): string[] {
+  const configured = (process.env.GOOGLE_ATTACHMENTS_ROOT || '').split(delimiter).filter(Boolean);
+  return configured.length ? configured : [tmpdir(), join(homedir(), '.cache')];
+}
+
+/**
+ * Checks where an attachment may be written. The path must be absolute and normalized, inside
+ * one of roots with no dot-named directory or file below that root (so nothing like .git/hooks,
+ * .config or .ssh), and its parent must be an existing directory reached without symlinks.
+ * Returns an error message, or null when the path is acceptable.
+ */
+export async function checkOutputPath(outputPath: string, roots: string[]): Promise<string | null> {
   if (!isAbsolute(outputPath)) return `output_path must be absolute: ${outputPath}`;
   if (normalize(outputPath) !== outputPath || outputPath.endsWith(sep)) {
     return `output_path must be a normalized file path (no "..", "." or trailing slash): ${outputPath}`;
+  }
+
+  // Roots first, so a path outside them is refused without looking at the filesystem there.
+  // Accepted when any root allows it, so overlapping roots don't depend on their order.
+  let dotError: string | null = null;
+  let inRoot = false;
+  for (const root of roots) {
+    const rel = relative(await realpath(root).catch(() => root), outputPath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
+    if (rel.split(sep).some((segment) => segment.startsWith('.'))) {
+      dotError ??= `output_path must not contain a dot-named directory or file below ${root}: ${outputPath}`;
+      continue;
+    }
+    inRoot = true;
+    break;
+  }
+  if (!inRoot) {
+    return dotError
+      ?? `output_path must be inside one of: ${roots.join(', ')} (set GOOGLE_ATTACHMENTS_ROOT to change): ${outputPath}`;
   }
 
   const parent = dirname(outputPath);
@@ -79,13 +111,6 @@ export async function checkOutputPath(outputPath: string, root?: string): Promis
   const realParent = await realpath(parent);
   if (realParent !== parent) {
     return `Parent directory must not go through a symlink: ${parent} resolves to ${realParent}`;
-  }
-
-  if (root) {
-    const rel = relative(await realpath(root).catch(() => root), outputPath);
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
-      return `output_path must be inside GOOGLE_ATTACHMENTS_ROOT (${root}): ${outputPath}`;
-    }
   }
   return null;
 }
@@ -117,12 +142,14 @@ export interface OutputTarget {
  *   (readlink /proc/self/fd/N) must equal the checked parent exactly. That covers a swap of any
  *   ancestor, not just the last component. The file is then created through that handle, so
  *   later swaps cannot redirect it.
- * - No /proc, GOOGLE_ATTACHMENTS_ROOT set: refused, since confinement cannot be guaranteed.
- * - No /proc, no root: best effort. The path is checked again just before the write. This guards
- *   against mistakes, not against a same-user process racing the write.
+ * - No /proc: the path is checked again just before the write. The root rules then still stop a
+ *   model-chosen path from leaving the roots, but not a same-user process racing the write.
  */
-export async function openOutputTarget(outputPath: string, root?: string): Promise<OutputTarget | { error: string }> {
-  const pathError = await checkOutputPath(outputPath, root);
+export async function openOutputTarget(
+  outputPath: string,
+  roots: string[] = getAttachmentRoots(),
+): Promise<OutputTarget | { error: string }> {
+  const pathError = await checkOutputPath(outputPath, roots);
   if (pathError) return { error: pathError };
   if (await lstat(outputPath).then(() => true, () => false)) return { error: `File already exists: ${outputPath}` };
 
@@ -146,10 +173,9 @@ export async function openOutputTarget(outputPath: string, root?: string): Promi
   }
 
   await dir.close();
-  if (root) return { error: 'GOOGLE_ATTACHMENTS_ROOT needs /proc/self/fd (Linux) to confine writes safely' };
   return {
     write: async (bytes) => {
-      const again = await checkOutputPath(outputPath);
+      const again = await checkOutputPath(outputPath, roots);
       if (again) throw new Error(again);
       await writeNewFile(outputPath, bytes);
     },

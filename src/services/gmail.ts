@@ -92,7 +92,7 @@ export const tools: Tool[] = [
         output_path: {
           type: 'string',
           description:
-            'Absolute path of the file to create. Its parent directory must already exist and the file must not.',
+            'Absolute path of the file to create, inside the system temp directory or ~/.cache (unless GOOGLE_ATTACHMENTS_ROOT says otherwise), with no dot-named directory below that. Its parent directory must already exist and the file must not. Example: a folder made with mktemp -d.',
         },
         account_email: { type: 'string', description: ACCOUNT_EMAIL_DESCRIPTION },
       },
@@ -203,7 +203,7 @@ export function register(
     if (typeof partId !== 'string') return error('Missing required parameter: part_id');
     if (!outputPath) return error('Missing required parameter: output_path');
 
-    const opened = await openOutputTarget(outputPath, process.env.GOOGLE_ATTACHMENTS_ROOT || undefined);
+    const opened = await openOutputTarget(outputPath);
     if ('error' in opened) return error(opened.error);
     try {
       return await saveAttachment(opened, messageId, partId, outputPath, args.account_email as string | undefined);
