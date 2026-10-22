@@ -1,10 +1,11 @@
 import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it, mock } from 'node:test';
 import { google } from 'googleapis';
-import { checkOutputPath, listAttachments, openOutputTarget, writeNewFile } from '../src/util/attachments.js';
+import { checkOutputPath, getAttachmentRoots, listAttachments, openOutputTarget, writeNewFile } from '../src/util/attachments.js';
 import { register } from '../src/services/gmail.js';
 import type { ToolResponse } from '../src/util/types.js';
 
@@ -102,28 +103,50 @@ describe('listAttachments', () => {
 
 describe('checkOutputPath', () => {
   it('rejects relative and non-normalized paths', async () => {
-    assert.match((await checkOutputPath('out.pdf'))!, /absolute/);
-    assert.match((await checkOutputPath(`${dir}/x/../out.pdf`))!, /normalized/);
-    assert.match((await checkOutputPath(`${dir}/out/`))!, /normalized/);
+    assert.match((await checkOutputPath('out.pdf', [dir]))!, /absolute/);
+    assert.match((await checkOutputPath(`${dir}/x/../out.pdf`, [dir]))!, /normalized/);
+    assert.match((await checkOutputPath(`${dir}/out/`, [dir]))!, /normalized/);
   });
 
   it('rejects a missing parent and a parent that is a file', async () => {
-    assert.match((await checkOutputPath(join(dir, 'missing', 'out.pdf')))!, /does not exist/);
+    assert.match((await checkOutputPath(join(dir, 'missing', 'out.pdf'), [dir]))!, /does not exist/);
     await writeFile(join(dir, 'afile'), '');
-    assert.match((await checkOutputPath(join(dir, 'afile', 'out.pdf')))!, /not a directory/);
+    assert.match((await checkOutputPath(join(dir, 'afile', 'out.pdf'), [dir]))!, /not a directory/);
   });
 
   it('rejects a parent reached through a symlink', async () => {
     await mkdir(join(dir, 'real'));
     await symlink(join(dir, 'real'), join(dir, 'link'));
-    assert.match((await checkOutputPath(join(dir, 'link', 'out.pdf')))!, /symlink/);
-    assert.equal(await checkOutputPath(join(dir, 'real', 'out.pdf')), null);
+    assert.match((await checkOutputPath(join(dir, 'link', 'out.pdf'), [dir]))!, /symlink/);
+    assert.equal(await checkOutputPath(join(dir, 'real', 'out.pdf'), [dir]), null);
   });
 
-  it('enforces the root when one is set', async () => {
-    await mkdir(join(dir, 'root'));
-    assert.equal(await checkOutputPath(join(dir, 'root', 'a.pdf'), join(dir, 'root')), null);
-    assert.match((await checkOutputPath(join(dir, 'a.pdf'), join(dir, 'root')))!, /GOOGLE_ATTACHMENTS_ROOT/);
+  it('confines writes to the roots and refuses dot-named paths below them', async () => {
+    await mkdir(join(dir, 'root', '.git', 'hooks'), { recursive: true });
+    const roots = [join(dir, 'root')];
+    assert.equal(await checkOutputPath(join(dir, 'root', 'a.pdf'), roots), null);
+    assert.match((await checkOutputPath(join(dir, 'a.pdf'), roots))!, /must be inside one of/);
+    assert.match((await checkOutputPath(join(dir, 'root', '.git', 'hooks', 'pre-commit'), roots))!, /dot-named/);
+    assert.match((await checkOutputPath(join(dir, 'root', '.bashrc'), roots))!, /dot-named/);
+    await mkdir(join(dir, 'root', '.cache'));
+    const overlapping = join(dir, 'root', '.cache', 'r.pdf');
+    assert.equal(await checkOutputPath(overlapping, [join(dir, 'root'), join(dir, 'root', '.cache')]), null);
+    assert.equal(await checkOutputPath(overlapping, [join(dir, 'root', '.cache'), join(dir, 'root')]), null);
+  });
+
+  it('defaults to the temp directory and ~/.cache, and GOOGLE_ATTACHMENTS_ROOT replaces them', async () => {
+    const saved = process.env.GOOGLE_ATTACHMENTS_ROOT;
+    try {
+      delete process.env.GOOGLE_ATTACHMENTS_ROOT;
+      assert.ok(getAttachmentRoots().includes(join(homedir(), '.cache')));
+      const autostart = join(homedir(), '.config', 'autostart', 'x.desktop');
+      assert.match((await checkOutputPath(autostart, getAttachmentRoots()))!, /must be inside one of/);
+      process.env.GOOGLE_ATTACHMENTS_ROOT = `/srv/a:${dir}`;
+      assert.deepEqual(getAttachmentRoots(), ['/srv/a', dir]);
+    } finally {
+      if (saved === undefined) delete process.env.GOOGLE_ATTACHMENTS_ROOT;
+      else process.env.GOOGLE_ATTACHMENTS_ROOT = saved;
+    }
   });
 });
 

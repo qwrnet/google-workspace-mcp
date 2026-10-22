@@ -152,7 +152,7 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 - `output_path` must be absolute and normalized, its parent directory must already exist, and no part of the parent path may be a symlink.
 - An existing file or symlink at `output_path` is never overwritten or followed. The new file has mode `600`.
 - Attachments over 25 MB are refused.
-- If `GOOGLE_ATTACHMENTS_ROOT` is set, `output_path` must be inside it.
+- `output_path` must be inside the system temp directory or `~/.cache`, with no dot-named directory or file below that root. Attachment content comes from whoever sent the email, and an email can try to steer the model's choice of path, so this keeps writes away from places like `~/.config/autostart`, `~/.ssh` or a repository's `.git/hooks`. `GOOGLE_ATTACHMENTS_ROOT` replaces the default roots with its own list (separated by `:`).
 
 ### Calendar (4)
 
@@ -189,7 +189,7 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `GOOGLE_OAUTH_CLIENTS_FILE` | No | Path to the named-clients file (default: `<accounts dir>/clients.json`) |
 | `GOOGLE_DEFAULT_ACCOUNT` | No | Account used when a tool call omits `account_email` (default: most recently used) |
 | `GOOGLE_OAUTH_PORT` | No | Loopback port for the OAuth callback (default: `9876`); the redirect URI is `http://127.0.0.1:<port>/oauth/callback` |
-| `GOOGLE_ATTACHMENTS_ROOT` | No | If set, `google_gmail_save_attachment` only writes inside this directory |
+| `GOOGLE_ATTACHMENTS_ROOT` | No | Directories `google_gmail_save_attachment` may write under, separated by `:` (default: the system temp directory and `~/.cache`) |
 | `GOOGLE_ACCOUNTS_DIR` | No | Token storage directory (default: `~/.google-mcp-accounts`) |
 
 ## Architecture
