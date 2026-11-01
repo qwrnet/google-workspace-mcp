@@ -85,6 +85,10 @@ async function fakeTransport(opts: { url?: string; method?: string; params?: Rec
     if (path === '/v1/people:createContact') return reply(opts, { resourceName: 'people/new', etag: 'e0', ...body });
     const upd = path.match(/^\/v1\/(people\/[^/:]+):updateContact$/);
     if (upd) {
+      const sources = (body.metadata as { sources?: Array<{ type?: string; etag?: string }> } | undefined)?.sources ?? [];
+      if (!sources.some((src) => src.type === 'CONTACT' && src.etag)) {
+        throw httpError(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'person.metadata.sources must be specified.' } }, 'person.metadata.sources must be specified.');
+      }
       if (body.etag !== 'etag-1') throw httpError(400, { error: { code: 400, status: 'FAILED_PRECONDITION', message: 'Request person.etag is different than the current person.etag.' } }, 'Request person.etag is different than the current person.etag.');
       return reply(opts, { ...people.find((x) => x.resourceName === upd[1]), ...body, etag: 'etag-2' });
     }
@@ -104,7 +108,12 @@ async function fakeTransport(opts: { url?: string; method?: string; params?: Rec
   if (one && !scopeMissing) {
     const person = people.find((x) => x.resourceName === one[1]);
     if (!person) throw httpError(404, { error: { code: 404, status: 'NOT_FOUND' } }, 'Requested entity was not found.');
-    return reply(opts, { ...person, etag: 'etag-1' });
+    const withMeta = String(params.personFields ?? '').split(',').includes('metadata');
+    return reply(opts, {
+      ...person,
+      etag: 'etag-1',
+      ...(withMeta ? { metadata: { sources: [{ type: 'CONTACT', id: 'src', etag: 'src-1' }, { type: 'PROFILE', id: 'p', etag: 'p-1' }] } } : {}),
+    });
   }
   if (scopeMissing) {
     throw scopeError();
@@ -390,6 +399,8 @@ describe('google_contacts_create', () => {
     assert.match(text(res), /Can't add a new contact to "Solaris: trusted"\. Nothing was created\./);
     process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = 'family';
     assert.match(text(await call('google_contacts_create', { given_name: 'Mallory', labels: ['Family'] })), /Can't add a new contact to "Family"/);
+    process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = 'My Contacts';
+    assert.match(text(await call('google_contacts_create', { given_name: 'Mallory' })), /always joins "My Contacts"\. Nothing was created\./);
     assert.deepEqual(writes, []);
   });
 
@@ -415,17 +426,24 @@ describe('google_contacts_update', () => {
     assert.equal(writes[0].params.updatePersonFields, 'names,biographies');
     assert.deepEqual(writes[0].body, {
       etag: 'etag-1',
-      names: [{ givenName: '', familyName: 'Dunn' }],
+      metadata: { sources: [{ type: 'CONTACT', id: 'src', etag: 'src-1' }] },
+      names: [{ familyName: 'Dunn' }],
       biographies: [{ value: 'Neighbor.', contentType: 'TEXT_PLAIN' }],
     });
     assert.deepEqual(res.contact.notes, ['Neighbor.']);
   });
 
-  it('keeps the other name part', async () => {
-    people[3].names = [{ displayName: 'Dan Doe', givenName: 'Dan', familyName: 'Doe', metadata: { primary: true } }];
+  it('keeps the other name parts and names', async () => {
+    people[3].names = [
+      { displayName: 'Dr. Dan M. Doe', givenName: 'Dan', middleName: 'M.', familyName: 'Doe', honorificPrefix: 'Dr.', unstructuredName: 'Dr. Dan M. Doe', metadata: { primary: true } },
+      { displayName: 'Danny', givenName: 'Danny', metadata: {} },
+    ];
     try {
       await call('google_contacts_update', { resource_name: 'people/c4', family_name: 'Dunn' });
-      assert.deepEqual(writes[0].body.names, [{ givenName: 'Dan', familyName: 'Dunn' }]);
+      assert.deepEqual(writes[0].body.names, [
+        { givenName: 'Dan', middleName: 'M.', familyName: 'Dunn', honorificPrefix: 'Dr.' },
+        { givenName: 'Danny' },
+      ]);
     } finally {
       people[3].names = [{ displayName: 'Dan Doe' }];
     }

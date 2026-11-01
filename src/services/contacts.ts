@@ -329,10 +329,19 @@ export function parseContactFields(args: Record<string, unknown>, current?: peop
 
   const fields: ContactFields = {};
   if (given !== undefined || family !== undefined) {
-    const primary = current?.names?.find((n) => n.metadata?.primary) ?? current?.names?.[0];
-    const givenName = (given as string | undefined) ?? primary?.givenName ?? '';
-    const familyName = (family as string | undefined) ?? primary?.familyName ?? '';
-    fields.names = givenName || familyName ? [{ givenName, familyName }] : [];
+    // names is replaced as a whole, so carry over the other names and the primary name's other
+    // parts (middle name, honorifics, phonetics). The display forms are derived, so drop them.
+    const strip = ({ metadata, displayName, displayNameLastFirst, unstructuredName, ...parts }: people_v1.Schema$Name) => parts;
+    const existing = current?.names ?? [];
+    const primary = existing.find((n) => n.metadata?.primary) ?? existing[0];
+    const merged = {
+      ...(primary ? strip(primary) : {}),
+      ...(given !== undefined ? { givenName: given as string } : {}),
+      ...(family !== undefined ? { familyName: family as string } : {}),
+    };
+    const others = existing.filter((n) => n !== primary).map(strip);
+    const empty = !Object.values(merged).some((v) => v);
+    fields.names = empty ? others : [merged, ...others];
   }
   if (emails) {
     for (const e of emails as Array<{ value: string }>) if (!e.value.includes('@')) return `"${e.value}" is not an email address`;
@@ -667,7 +676,11 @@ export function register(
         if (isProtectedGroup(g)) return protectedRefusal(`Can't add a new contact to "${groupLabel(g)}". Nothing was created.`);
         memberships.add(g.resourceName);
       }
-      // Naming memberships replaces the default, so keep the contact in My Contacts.
+      // Every new contact lands in My Contacts (named memberships replace the default, so add it back).
+      const myContacts = groups.find((g) => g.resourceName === 'contactGroups/myContacts');
+      if (myContacts && isProtectedGroup(myContacts)) {
+        return protectedRefusal(`A new contact always joins "${groupLabel(myContacts)}". Nothing was created.`);
+      }
       if (memberships.size) memberships.add('contactGroups/myContacts');
       const res = await people.people.createContact({
         personFields: PERSON_FIELDS,
@@ -695,7 +708,7 @@ export function register(
     try {
       const [groups, current] = await Promise.all([
         listGroups(people),
-        people.people.get({ resourceName, personFields: PERSON_FIELDS }),
+        people.people.get({ resourceName, personFields: `${PERSON_FIELDS},metadata` }),
       ]);
       const fields = parseContactFields(args, current.data) as ContactFields;
       const label = protectedMembership(current.data, groups);
@@ -709,7 +722,12 @@ export function register(
         resourceName,
         updatePersonFields: Object.keys(fields).join(','),
         personFields: PERSON_FIELDS,
-        requestBody: { etag: current.data.etag, ...fields },
+        // The People API requires the contact's source (with its etag) alongside the person etag.
+        requestBody: {
+          etag: current.data.etag,
+          metadata: { sources: (current.data.metadata?.sources ?? []).filter((src) => src.type === 'CONTACT') },
+          ...fields,
+        },
       });
       return json({ contact: toContact(res.data, groupNameMap(groups)) });
     } catch (err) {
