@@ -433,17 +433,14 @@ describe('google_contacts_update', () => {
     assert.deepEqual(res.contact.notes, ['Neighbor.']);
   });
 
-  it('keeps the other name parts and names', async () => {
+  it('keeps the contact name\'s other parts and sends a single name, ignoring a linked profile\'s', async () => {
     people[3].names = [
-      { displayName: 'Dr. Dan M. Doe', givenName: 'Dan', middleName: 'M.', familyName: 'Doe', honorificPrefix: 'Dr.', unstructuredName: 'Dr. Dan M. Doe', metadata: { primary: true } },
-      { displayName: 'Danny', givenName: 'Danny', metadata: {} },
+      { displayName: 'Daniel Doe', givenName: 'Daniel', familyName: 'Doe', metadata: { primary: true, source: { type: 'PROFILE' } } },
+      { displayName: 'Dr. Dan M. Doe', givenName: 'Dan', middleName: 'M.', familyName: 'Doe', honorificPrefix: 'Dr.', unstructuredName: 'Dr. Dan M. Doe', metadata: { source: { type: 'CONTACT' } } },
     ];
     try {
       await call('google_contacts_update', { resource_name: 'people/c4', family_name: 'Dunn' });
-      assert.deepEqual(writes[0].body.names, [
-        { givenName: 'Dan', middleName: 'M.', familyName: 'Dunn', honorificPrefix: 'Dr.' },
-        { givenName: 'Danny' },
-      ]);
+      assert.deepEqual(writes[0].body.names, [{ givenName: 'Dan', middleName: 'M.', familyName: 'Dunn', honorificPrefix: 'Dr.' }]);
     } finally {
       people[3].names = [{ displayName: 'Dan Doe' }];
     }

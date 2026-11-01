@@ -329,19 +329,17 @@ export function parseContactFields(args: Record<string, unknown>, current?: peop
 
   const fields: ContactFields = {};
   if (given !== undefined || family !== undefined) {
-    // names is replaced as a whole, so carry over the other names and the primary name's other
-    // parts (middle name, honorifics, phonetics). The display forms are derived, so drop them.
+    // A contact holds a single name, replaced as a whole, so start from the contact's own name
+    // (not one from a linked Google profile) to keep its middle name, honorifics and phonetics.
+    // The display forms are derived from the parts, so drop them.
     const strip = ({ metadata, displayName, displayNameLastFirst, unstructuredName, ...parts }: people_v1.Schema$Name) => parts;
-    const existing = current?.names ?? [];
-    const primary = existing.find((n) => n.metadata?.primary) ?? existing[0];
+    const own = current?.names?.find((n) => n.metadata?.source?.type === 'CONTACT');
     const merged = {
-      ...(primary ? strip(primary) : {}),
+      ...(own ? strip(own) : {}),
       ...(given !== undefined ? { givenName: given as string } : {}),
       ...(family !== undefined ? { familyName: family as string } : {}),
     };
-    const others = existing.filter((n) => n !== primary).map(strip);
-    const empty = !Object.values(merged).some((v) => v);
-    fields.names = empty ? others : [merged, ...others];
+    fields.names = Object.values(merged).some((v) => v) ? [merged] : [];
   }
   if (emails) {
     for (const e of emails as Array<{ value: string }>) if (!e.value.includes('@')) return `"${e.value}" is not an email address`;
