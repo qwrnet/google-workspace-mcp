@@ -21,6 +21,7 @@ import * as gmailService from './services/gmail.js';
 import * as calendarService from './services/calendar.js';
 import * as slidesService from './services/slides.js';
 import * as groupsService from './services/groups.js';
+import * as contactsService from './services/contacts.js';
 
 const services = [
   accountsService,
@@ -31,6 +32,7 @@ const services = [
   calendarService,
   slidesService,
   groupsService,
+  contactsService,
 ];
 
 const allTools: Tool[] = services.flatMap(s => s.tools);
@@ -52,7 +54,7 @@ for (const svc of services) {
 }
 
 const server = new Server(
-  { name: 'google-workspace-mcp', version: '0.3.1' },
+  { name: 'google-workspace-mcp', version: '0.4.0' },
   { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
