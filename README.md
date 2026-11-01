@@ -1,10 +1,10 @@
 # Google Workspace MCP Server
 
-A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 46 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, Groups, and Contacts.
+A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 51 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, Groups, and Contacts.
 
 ## Features
 
-- **46 tools** across 9 Google Workspace services
+- **51 tools** across 9 Google Workspace services
 - **Auto-refreshing tokens** — uses the `googleapis` npm client which handles token refresh transparently
 - **Multi-account support** — authenticate multiple Google accounts, switch between them per-request
 - **Multiple OAuth clients** — accounts from different Workspace orgs can live in one server (see [Multiple OAuth clients](#multiple-oauth-clients))
@@ -79,9 +79,9 @@ The server asks for these scopes when an account signs in:
 | `calendar` | Calendar tools |
 | `presentations` | Slides tools |
 | `cloud-identity.groups.readonly` | Groups tools |
-| `contacts.readonly` | Contacts tools (read-only; the server can never change contacts) |
+| `contacts` | Contacts tools (read and write; protected labels stay owner-only, see [Contacts](#contacts-8)) |
 
-All are under `https://www.googleapis.com/auth/`. Accounts signed in before a scope was added do not have it: a Contacts call on such an account fails with "has not granted Google Contacts access ... Sign in again to grant Contacts". Run `google_accounts_auth_start` for that account (with the client shown by `google_accounts_list`) and accept the Contacts permission once.
+All are under `https://www.googleapis.com/auth/`. Accounts signed in before a scope was added do not have it: a Contacts call on such an account fails with "has not granted Google Contacts access ... Sign in again to grant Contacts". An account signed in while the server only asked for `contacts.readonly` can still read, but a write fails with "has not granted permission to change Google Contacts ... Sign in again to grant Contacts". Either way, run `google_accounts_auth_start` for that account (with the client shown by `google_accounts_list`) and accept the Contacts permission once.
 
 ## Using multiple accounts
 
@@ -199,17 +199,24 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `google_groups_get_members` | Get members of a group |
 | `google_groups_add_member` | Add a member to a group |
 
-### Contacts (3)
+### Contacts (8)
 
-Read-only, through the People API. Each contact comes back as `{resource_name, names, emails, phones, notes, groups}`: all names, all emails and phones (with type, and the E.164 `canonical` form of each phone when Google has one), notes (the contact's biography field) and the names of the contact groups (labels) it belongs to.
+Through the People API. Each contact comes back as `{resource_name, names, emails, phones, addresses, organizations, notes, groups}`: all names, all emails and phones (with type, and the E.164 `canonical` form of each phone when Google has one), postal addresses, company and title, notes (the contact's biography field) and the names of the contact groups (labels) it belongs to.
 
 | Tool | Description |
 |------|-------------|
 | `google_contacts_search` | Find contacts by exactly one of `email` (exact, case-insensitive, any of the contact's emails), `phone` (digits of any of its numbers; a 10-digit number also matches its +1 form) or `query` (substring of a name or email). Paginated with `page_size` (max 100) and `page_token` |
 | `google_contacts_list_groups` | List contact groups (labels) with member counts |
 | `google_contacts_list_group_members` | List the contacts in a group, by exact label name (e.g. `Solaris: trusted`) or resource name. Paginated like search |
+| `google_contacts_create` | Create a contact from `given_name`, `family_name`, `emails`, `phones`, `addresses`, `organization` (`{company, title}`), `notes` and `labels` (existing label names) |
+| `google_contacts_update` | Change a contact's fields by `resource_name`. Only the fields passed change; a list passed (`emails`, `phones`, `addresses`) replaces the whole list, and an empty list or empty `notes` clears it. Uses the contact's etag, so a contact changed in the meantime is reported, not overwritten |
+| `google_contacts_delete` | Delete a contact by `resource_name` |
+| `google_contacts_create_label` | Create a label |
+| `google_contacts_update_label_members` | Add (`add`) or remove (`remove`) contacts by resource name on a label given by exact name or resource name |
 
-The server only requests `contacts.readonly` and has no tool that writes contacts, so a label such as `Solaris: trusted` can safely serve as a permission list: an agent using this server can read who is on it but cannot add itself or anyone else. Label names are matched exactly, so a near-miss never resolves to a different label. If the People API cannot return some members of a group, they are listed under `failed_members` with a `warning`, never silently left out.
+Label names are matched exactly, so a near-miss never resolves to a different label. If the People API cannot return some members of a group, they are listed under `failed_members` with a `warning`, never silently left out.
+
+**Protected labels.** A label such as `Solaris: trusted` can serve as a permission list, because no tool can change who is on it. For a protected label, the write tools refuse to add or remove members (`google_contacts_update_label_members`, `labels` on `google_contacts_create`) or to create a label with its name in any letter case. They also refuse to change the `emails` or `phones` of a contact on it, since those decide which sender is that contact, and to delete such a contact. Names, addresses, organization and notes of those contacts can still be edited. There is no tool to rename or delete a label. Only the account owner changes a protected label, in Google Contacts itself. `GOOGLE_CONTACTS_PROTECTED_LABELS` sets the protected labels (comma-separated; default `Solaris: trusted`; empty protects none).
 
 ## Environment Variables
 
@@ -220,6 +227,7 @@ The server only requests `contacts.readonly` and has no tool that writes contact
 | `GOOGLE_OAUTH_CLIENTS_FILE` | No | Path to the named-clients file (default: `<accounts dir>/clients.json`) |
 | `GOOGLE_DEFAULT_ACCOUNT` | No | Account used when a tool call omits `account_email` (default: most recently used) |
 | `GOOGLE_OAUTH_PORT` | No | Loopback port for the OAuth callback (default: `9876`); the redirect URI is `http://127.0.0.1:<port>/oauth/callback` |
+| `GOOGLE_CONTACTS_PROTECTED_LABELS` | No | Contact labels the write tools never change, comma-separated (default: `Solaris: trusted`; empty: none) |
 | `GOOGLE_ATTACHMENTS_ROOT` | No | Directories `google_gmail_save_attachment` may write under, separated by `:` (default: the system temp directory and `~/.cache`) |
 | `GOOGLE_ACCOUNTS_DIR` | No | Token storage directory (default: `~/.google-mcp-accounts`) |
 
