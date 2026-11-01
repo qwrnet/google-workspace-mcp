@@ -43,7 +43,12 @@ const people: Record<string, unknown>[] = [
   },
 ];
 
+/** What batchGet returns where the list response would be cut short. */
+const fullPeople: Record<string, Record<string, unknown>> = {};
+
 let scopeMissing = false;
+/** batchGet answers these resource names with a per-person error instead of the person. */
+const batchFailures = new Set<string>();
 const requests: string[] = [];
 
 function httpError(status: number, data: unknown, message: string): Error {
@@ -86,7 +91,9 @@ async function fakeTransport(opts: { url?: string; params?: Record<string, unkno
   if (url.pathname === '/v1/people:batchGet') {
     const names = ([] as unknown[]).concat(params.resourceNames ?? url.searchParams.getAll('resourceNames')) as string[];
     return reply(opts, {
-      responses: names.map((n) => ({ requestedResourceName: n, person: people.find((p) => p.resourceName === n) })),
+      responses: names.map((n) => batchFailures.has(n)
+        ? { requestedResourceName: n, httpStatusCode: 403, status: { code: 7, message: 'Permission denied' } }
+        : { requestedResourceName: n, person: fullPeople[n] ?? people.find((p) => p.resourceName === n) }),
     });
   }
   throw httpError(404, { error: { code: 404 } }, `Unexpected request ${url.pathname}`);
@@ -113,6 +120,8 @@ after(() => mock.restoreAll());
 beforeEach(() => {
   scopeMissing = false;
   requests.length = 0;
+  batchFailures.clear();
+  for (const k of Object.keys(fullPeople)) delete fullPeople[k];
 });
 
 describe('contacts scope and tools', () => {
@@ -171,6 +180,21 @@ describe('google_contacts_search', () => {
     assert.equal(second.next_page_token, null);
   });
 
+  it('re-reads a contact whose email list may have been cut short by the list response', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ value: `old${i}@example.com` }));
+    const original = people[3].emailAddresses;
+    people[3].emailAddresses = many;
+    fullPeople['people/c4'] = { ...people[3], emailAddresses: [...many, { value: 'dan.latest@example.com' }] };
+    try {
+      const res = data(await call('google_contacts_search', { email: 'dan.latest@example.com' }));
+      assert.deepEqual(res.contacts.map((c: { resource_name: string }) => c.resource_name), ['people/c4']);
+      assert.equal(res.contacts[0].emails.length, 101);
+      assert.ok(requests.includes('/v1/people:batchGet'));
+    } finally {
+      people[3].emailAddresses = original;
+    }
+  });
+
   it('bounds page_size', async () => {
     const res = data(await call('google_contacts_search', { query: 'example', page_size: 10_000 }));
     assert.equal(res.count, 3);
@@ -209,6 +233,14 @@ describe('google_contacts_list_group_members', () => {
     assert.deepEqual(second.members.map((m: { resource_name: string }) => m.resource_name), ['people/c3']);
     assert.deepEqual(second.members[0].groups, ['My Contacts', 'Solaris: trusted']);
     assert.equal(second.next_page_token, null);
+  });
+
+  it('reports members that could not be read instead of dropping them', async () => {
+    batchFailures.add('people/c2');
+    const res = data(await call('google_contacts_list_group_members', { group: 'Solaris: trusted' }));
+    assert.deepEqual(res.members.map((m: { resource_name: string }) => m.resource_name), ['people/c1', 'people/c3']);
+    assert.deepEqual(res.failed_members, [{ resource_name: 'people/c2', error: 'Permission denied' }]);
+    assert.match(res.warning, /could not be read/);
   });
 
   it('accepts a resource name', async () => {

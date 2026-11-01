@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { OAuth2Client } from '../util/types.js';
 import { createOAuth2Client } from './oauth.js';
 import { instrumentClient } from './invocation.js';
-import { DEFAULT_CLIENT_NAME, resolveClient } from './clients.js';
+import { resolveClient } from './clients.js';
 import { getAccountsDir } from './config.js';
 import type { TokenFileData } from '../util/types.js';
 
@@ -222,7 +222,8 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
       throw new Error(`Account not found: ${emailForCreation}`);
     }
 
-    const client = createOAuth2Client(await resolveClient(acct.client));
+    const creds = await resolveClient(acct.client);
+    const client = createOAuth2Client(creds);
     client.setCredentials({
       access_token: acct.token.access_token,
       refresh_token: acct.token.refresh_token,
@@ -230,7 +231,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     });
 
     instrumentClient(client, emailForCreation);
-    clientAccounts.set(client, { email: emailForCreation, client: acct.client ?? DEFAULT_CLIENT_NAME });
+    clientAccounts.set(client, { email: emailForCreation, client: creds.name });
 
     // Persist refreshed tokens to disk. A client that was replaced after a re-auth keeps
     // this listener, so it only writes while the file still holds its refresh token.

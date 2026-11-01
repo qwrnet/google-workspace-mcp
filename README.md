@@ -209,7 +209,7 @@ Read-only, through the People API. Each contact comes back as `{resource_name, n
 | `google_contacts_list_groups` | List contact groups (labels) with member counts |
 | `google_contacts_list_group_members` | List the contacts in a group, by exact label name (e.g. `Solaris: trusted`) or resource name. Paginated like search |
 
-The server only requests `contacts.readonly` and has no tool that writes contacts, so a label such as `Solaris: trusted` can safely serve as a permission list: an agent using this server can read who is on it but cannot add itself or anyone else. Label names are matched exactly, so a near-miss never resolves to a different label.
+The server only requests `contacts.readonly` and has no tool that writes contacts, so a label such as `Solaris: trusted` can safely serve as a permission list: an agent using this server can read who is on it but cannot add itself or anyone else. Label names are matched exactly, so a near-miss never resolves to a different label. If the People API cannot return some members of a group, they are listed under `failed_members` with a `warning`, never silently left out.
 
 ## Environment Variables
 

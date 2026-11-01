@@ -191,6 +191,41 @@ async function listAllContacts(people: people_v1.People): Promise<{ people: peop
   return { people: all, complete: false };
 }
 
+/** The API returns at most this many entries of a repeated field in list responses. */
+const LIST_FIELD_LIMIT = 100;
+
+interface BatchResult {
+  found: Map<string, people_v1.Schema$Person>;
+  failed: Array<{ resource_name: string; error: string }>;
+}
+
+/** Fetch people by resource name, keeping per-person failures instead of dropping them. */
+async function getPeople(people: people_v1.People, resourceNames: string[]): Promise<BatchResult> {
+  const found = new Map<string, people_v1.Schema$Person>();
+  const failed: BatchResult['failed'] = [];
+  for (let i = 0; i < resourceNames.length; i += BATCH_GET_LIMIT) {
+    const requested = resourceNames.slice(i, i + BATCH_GET_LIMIT);
+    const batch = await people.people.getBatchGet({ resourceNames: requested, personFields: PERSON_FIELDS });
+    const seen = new Set<string>();
+    for (const r of batch.data.responses ?? []) {
+      const name = r.requestedResourceName;
+      if (!name) continue;
+      seen.add(name);
+      const code = r.status?.code ?? 0;
+      if (r.person && code === 0) found.set(name, r.person);
+      else failed.push({ resource_name: name, error: r.status?.message || `status ${code || r.httpStatusCode || 'unknown'}` });
+    }
+    for (const name of requested) {
+      if (!seen.has(name)) failed.push({ resource_name: name, error: 'not returned by the People API' });
+    }
+  }
+  return { found, failed };
+}
+
+function maybeTruncated(p: people_v1.Schema$Person): boolean {
+  return (p.emailAddresses?.length ?? 0) >= LIST_FIELD_LIMIT || (p.phoneNumbers?.length ?? 0) >= LIST_FIELD_LIMIT;
+}
+
 function page<T>(items: T[], size: number, offset: number): { items: T[]; next_page_token: string | null } {
   const slice = items.slice(offset, offset + size);
   const next = offset + size < items.length ? String(offset + size) : null;
@@ -271,6 +306,14 @@ export function register(
     const people = google.people({ version: 'v1', auth });
     try {
       const [groups, scan] = await Promise.all([listGroups(people), listAllContacts(people)]);
+      // List responses cap repeated fields, so re-read any contact that may have been cut short.
+      const truncated = scan.people.filter((p) => p.resourceName && maybeTruncated(p)).map((p) => p.resourceName!);
+      let failed: BatchResult['failed'] = [];
+      if (truncated.length) {
+        const full = await getPeople(people, truncated);
+        failed = full.failed;
+        scan.people = scan.people.map((p) => full.found.get(p.resourceName ?? '') ?? p);
+      }
       const matches = scan.people.filter((p) => {
         if (email) return (p.emailAddresses ?? []).some((e) => normEmail(e.value) === email);
         if (phone) return (p.phoneNumbers ?? []).some((ph) => phoneMatches(phone, ph));
@@ -285,6 +328,7 @@ export function register(
         total_matches: matches.length,
         next_page_token,
         ...(scan.complete ? {} : { warning: 'The contact list was too long to scan completely; some matches may be missing.' }),
+        ...(failed.length ? { failed_contacts: failed } : {}),
       });
     } catch (err) {
       return describeError(err, auth, accountEmail, 'search contacts');
@@ -331,16 +375,7 @@ export function register(
       const memberNames = res.data.memberResourceNames ?? [];
       const { items: pageNames, next_page_token } = page(memberNames, paging.size, paging.offset);
 
-      const found = new Map<string, people_v1.Schema$Person>();
-      for (let i = 0; i < pageNames.length; i += BATCH_GET_LIMIT) {
-        const batch = await people.people.getBatchGet({
-          resourceNames: pageNames.slice(i, i + BATCH_GET_LIMIT),
-          personFields: PERSON_FIELDS,
-        });
-        for (const r of batch.data.responses ?? []) {
-          if (r.person && r.requestedResourceName) found.set(r.requestedResourceName, r.person);
-        }
-      }
+      const { found, failed } = await getPeople(people, pageNames);
 
       const names = groupNameMap(groups);
       const members = pageNames.filter((n) => found.has(n)).map((n) => toContact(found.get(n)!, names));
@@ -349,6 +384,10 @@ export function register(
         members,
         count: members.length,
         next_page_token,
+        ...(failed.length ? {
+          failed_members: failed,
+          warning: `${failed.length} member(s) of this group could not be read and are not in members; do not treat them as absent from the group.`,
+        } : {}),
       });
     } catch (err) {
       return describeError(err, auth, accountEmail, 'list contact group members');
