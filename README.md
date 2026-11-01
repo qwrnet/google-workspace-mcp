@@ -1,10 +1,10 @@
 # Google Workspace MCP Server
 
-A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 43 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, and Groups.
+A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server that provides 46 tools for interacting with Google Workspace APIs: Drive, Sheets, Docs, Gmail, Calendar, Slides, Groups, and Contacts.
 
 ## Features
 
-- **43 tools** across 8 Google Workspace services
+- **46 tools** across 9 Google Workspace services
 - **Auto-refreshing tokens** — uses the `googleapis` npm client which handles token refresh transparently
 - **Multi-account support** — authenticate multiple Google accounts, switch between them per-request
 - **Multiple OAuth clients** — accounts from different Workspace orgs can live in one server (see [Multiple OAuth clients](#multiple-oauth-clients))
@@ -29,6 +29,7 @@ A TypeScript [Model Context Protocol](https://modelcontextprotocol.io/) server t
    - Google Calendar API
    - Google Slides API
    - Cloud Identity API
+   - People API (for the Contacts tools)
 3. Go to **APIs & Services > Credentials**
 4. Create an **OAuth 2.0 Client ID** with type **Web application**
 5. Add `http://127.0.0.1:9876/oauth/callback` as an **Authorized redirect URI**
@@ -63,6 +64,24 @@ Add to your `~/.claude.json` under `mcpServers`:
 ### 4. Authenticate
 
 After restarting Claude Code, use the `google_accounts_auth_start` tool to begin the OAuth flow. Visit the returned URL in your browser to authorize access.
+
+### OAuth scopes
+
+The server asks for these scopes when an account signs in:
+
+| Scope | Used by |
+|-------|---------|
+| `userinfo.email`, `userinfo.profile` | Identifying the signed-in account |
+| `drive` | Drive tools |
+| `spreadsheets` | Sheets tools |
+| `documents` | Docs tools |
+| `gmail.modify` | Gmail tools |
+| `calendar` | Calendar tools |
+| `presentations` | Slides tools |
+| `cloud-identity.groups.readonly` | Groups tools |
+| `contacts.readonly` | Contacts tools (read-only; the server can never change contacts) |
+
+All are under `https://www.googleapis.com/auth/`. Accounts signed in before a scope was added do not have it: a Contacts call on such an account fails with "has not granted Google Contacts access ... Sign in again to grant Contacts". Run `google_accounts_auth_start` for that account (with the client shown by `google_accounts_list`) and accept the Contacts permission once.
 
 ## Using multiple accounts
 
@@ -179,6 +198,18 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `google_groups_list` | List groups (requires Workspace account) |
 | `google_groups_get_members` | Get members of a group |
 | `google_groups_add_member` | Add a member to a group |
+
+### Contacts (3)
+
+Read-only, through the People API. Each contact comes back as `{resource_name, names, emails, phones, notes, groups}`: all names, all emails and phones (with type, and the E.164 `canonical` form of each phone when Google has one), notes (the contact's biography field) and the names of the contact groups (labels) it belongs to.
+
+| Tool | Description |
+|------|-------------|
+| `google_contacts_search` | Find contacts by exactly one of `email` (exact, case-insensitive, any of the contact's emails), `phone` (digits of any of its numbers; a 10-digit number also matches its +1 form) or `query` (substring of a name or email). Paginated with `page_size` (max 100) and `page_token` |
+| `google_contacts_list_groups` | List contact groups (labels) with member counts |
+| `google_contacts_list_group_members` | List the contacts in a group, by exact label name (e.g. `Solaris: trusted`) or resource name. Paginated like search |
+
+The server only requests `contacts.readonly` and has no tool that writes contacts, so a label such as `Solaris: trusted` can safely serve as a permission list: an agent using this server can read who is on it but cannot add itself or anyone else. Label names are matched exactly, so a near-miss never resolves to a different label.
 
 ## Environment Variables
 
