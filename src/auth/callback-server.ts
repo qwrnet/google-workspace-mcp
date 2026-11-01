@@ -64,27 +64,29 @@ async function handleCallback(session: PendingAuth, code: string, res: ServerRes
       return;
     }
 
-    const existingAccount = await getAccount(profile.email).catch(() => null);
-    const accountData = buildAccountData(tokens, profile, existingAccount, creds.name);
-
-    if (!accountData.token.refresh_token) {
+    // A newer auth_start or the timeout may have ended this session while we awaited Google. The check,
+    // the read of the stored account and the merge all run inside the queue, so they see the previous
+    // save's result and any newer sign-in's save is ordered after this one.
+    const email = profile.email;
+    const save = saveQueue.then(async (): Promise<TokenFileData | 'superseded' | 'no_refresh_token'> => {
+      if (session.settled) return 'superseded';
+      const existingAccount = await getAccount(email).catch(() => null);
+      const data = buildAccountData(tokens, profile, existingAccount, creds.name);
+      if (!data.token.refresh_token) return 'no_refresh_token';
+      await saveAccount(data);
+      return data;
+    });
+    saveQueue = save.catch(() => {});
+    const accountData = await save;
+    if (accountData === 'superseded') {
+      res.writeHead(409);
+      res.end('This sign-in was replaced by a newer google_accounts_auth_start or timed out. Nothing was saved.');
+      return;
+    }
+    if (accountData === 'no_refresh_token') {
       res.writeHead(400);
       res.end('No refresh token available. Please revoke access and re-authorize.');
       session.reject(new Error('No refresh token obtained'));
-      return;
-    }
-
-    // A newer auth_start or the timeout may have ended this session while we awaited Google. The check
-    // runs inside the queue, so once it passes, any newer sign-in's save is ordered after this one.
-    const save = saveQueue.then(async () => {
-      if (session.settled) return false;
-      await saveAccount(accountData);
-      return true;
-    });
-    saveQueue = save.catch(() => {});
-    if (!(await save)) {
-      res.writeHead(409);
-      res.end('This sign-in was replaced by a newer google_accounts_auth_start or timed out. Nothing was saved.');
       return;
     }
 
