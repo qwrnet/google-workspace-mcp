@@ -14,8 +14,9 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/presentations',
   'https://www.googleapis.com/auth/cloud-identity.groups.readonly',
-  // Read-only on purpose: contact labels such as "Solaris: trusted" act as permission lists.
-  'https://www.googleapis.com/auth/contacts.readonly',
+  // Read and write. Labels such as "Solaris: trusted" act as permission lists; the Contacts
+  // tools refuse to change them (see protectedLabels in services/contacts.ts).
+  'https://www.googleapis.com/auth/contacts',
 ];
 
 export function createOAuth2Client(creds: ClientCredentials): OAuth2Client {

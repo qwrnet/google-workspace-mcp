@@ -47,6 +47,10 @@ const people: Record<string, unknown>[] = [
 const fullPeople: Record<string, Record<string, unknown>> = {};
 
 let scopeMissing = false;
+/** Reads work but writes fail with a scope error, like a token granted only contacts.readonly. */
+let writeScopeMissing = false;
+/** Every write request the server sent: method, path and body. */
+const writes: Array<{ method: string; path: string; params: Record<string, unknown>; body: Record<string, unknown> }> = [];
 /** batchGet answers these resource names with a per-person error instead of the person. */
 const batchFailures = new Set<string>();
 const requests: string[] = [];
@@ -59,19 +63,60 @@ function reply(opts: unknown, data: unknown) {
   return { status: 200, data, headers: {}, config: opts };
 }
 
-async function fakeTransport(opts: { url?: string; params?: Record<string, unknown> }) {
+const scopeError = () => httpError(403, {
+  error: {
+    code: 403,
+    message: 'Request had insufficient authentication scopes.',
+    status: 'PERMISSION_DENIED',
+    details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', domain: 'googleapis.com' }],
+  },
+}, 'Request had insufficient authentication scopes.');
+
+async function fakeTransport(opts: { url?: string; method?: string; params?: Record<string, unknown>; data?: unknown }) {
   const url = new URL(String(opts.url));
   const params = { ...Object.fromEntries(url.searchParams), ...(opts.params ?? {}) } as Record<string, unknown>;
+  const method = (opts.method ?? 'GET').toUpperCase();
+  const path = decodeURIComponent(url.pathname);
   requests.push(url.pathname);
+  if (method !== 'GET') {
+    const body = (typeof opts.data === 'string' ? JSON.parse(opts.data) : opts.data ?? {}) as Record<string, unknown>;
+    if (writeScopeMissing) throw scopeError();
+    writes.push({ method, path, params, body });
+    if (path === '/v1/people:createContact') return reply(opts, { resourceName: 'people/new', etag: 'e0', ...body });
+    const upd = path.match(/^\/v1\/(people\/[^/:]+):updateContact$/);
+    if (upd) {
+      const sources = (body.metadata as { sources?: Array<{ type?: string; etag?: string }> } | undefined)?.sources ?? [];
+      if (!sources.some((src) => src.type === 'CONTACT' && src.etag)) {
+        throw httpError(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'person.metadata.sources must be specified.' } }, 'person.metadata.sources must be specified.');
+      }
+      if (body.etag !== 'etag-1') throw httpError(400, { error: { code: 400, status: 'FAILED_PRECONDITION', message: 'Request person.etag is different than the current person.etag.' } }, 'Request person.etag is different than the current person.etag.');
+      return reply(opts, { ...people.find((x) => x.resourceName === upd[1]), ...body, etag: 'etag-2' });
+    }
+    if (/^\/v1\/people\/[^/:]+:deleteContact$/.test(path)) return reply(opts, {});
+    if (path === '/v1/contactGroups') {
+      const name = (body.contactGroup as { name: string }).name;
+      return reply(opts, { resourceName: 'contactGroups/new', name, formattedName: name, groupType: 'USER_CONTACT_GROUP' });
+    }
+    if (/^\/v1\/contactGroups\/[^/]+\/members:modify$/.test(path)) {
+      const known = new Set(people.map((x) => x.resourceName));
+      const asked = [...(body.resourceNamesToAdd as string[] ?? []), ...(body.resourceNamesToRemove as string[] ?? [])];
+      return reply(opts, { notFoundResourceNames: asked.filter((r) => !known.has(r)) });
+    }
+    throw httpError(404, { error: { code: 404 } }, `Unexpected ${method} ${path}`);
+  }
+  const one = path.match(/^\/v1\/(people\/c\d+)$/);
+  if (one && !scopeMissing) {
+    const person = people.find((x) => x.resourceName === one[1]);
+    if (!person) throw httpError(404, { error: { code: 404, status: 'NOT_FOUND' } }, 'Requested entity was not found.');
+    const withMeta = String(params.personFields ?? '').split(',').includes('metadata');
+    return reply(opts, {
+      ...person,
+      etag: 'etag-1',
+      ...(withMeta ? { metadata: { sources: [{ type: 'CONTACT', id: 'src', etag: 'src-1' }, { type: 'PROFILE', id: 'p', etag: 'p-1' }] } } : {}),
+    });
+  }
   if (scopeMissing) {
-    throw httpError(403, {
-      error: {
-        code: 403,
-        message: 'Request had insufficient authentication scopes.',
-        status: 'PERMISSION_DENIED',
-        details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', domain: 'googleapis.com' }],
-      },
-    }, 'Request had insufficient authentication scopes.');
+    throw scopeError();
   }
   if (url.pathname === '/v1/people/me/connections') {
     // Two pages of two, so the scan has to follow nextPageToken.
@@ -119,19 +164,26 @@ after(() => mock.restoreAll());
 
 beforeEach(() => {
   scopeMissing = false;
+  writeScopeMissing = false;
   requests.length = 0;
+  writes.length = 0;
+  delete process.env.GOOGLE_CONTACTS_PROTECTED_LABELS;
   batchFailures.clear();
   for (const k of Object.keys(fullPeople)) delete fullPeople[k];
 });
 
 describe('contacts scope and tools', () => {
-  it('requests contacts.readonly and no Contacts write scope', () => {
-    assert.ok(SCOPES.includes('https://www.googleapis.com/auth/contacts.readonly'));
-    assert.ok(!SCOPES.some((s) => /\/auth\/contacts(\.other)?$/.test(s) || s.endsWith('/auth/contacts.other.readonly')));
+  it('requests the contacts scope, which covers reading and writing', () => {
+    assert.ok(SCOPES.includes('https://www.googleapis.com/auth/contacts'));
+    assert.ok(!SCOPES.includes('https://www.googleapis.com/auth/contacts.readonly'));
   });
 
-  it('registers only read tools', () => {
-    assert.deepEqual(tools.map((t) => t.name), ['google_contacts_search', 'google_contacts_list_groups', 'google_contacts_list_group_members']);
+  it('registers the read and write tools', () => {
+    assert.deepEqual(tools.map((t) => t.name), [
+      'google_contacts_search', 'google_contacts_list_groups', 'google_contacts_list_group_members',
+      'google_contacts_create', 'google_contacts_update', 'google_contacts_delete',
+      'google_contacts_create_label', 'google_contacts_update_label_members',
+    ]);
     assert.deepEqual([...handlers.keys()], tools.map((t) => t.name));
   });
 });
@@ -145,6 +197,8 @@ describe('google_contacts_search', () => {
       names: ['Alice Archer'],
       emails: [{ value: 'alice@example.com', type: 'Home' }, { value: 'Alice.Work@Example.org', type: null }],
       phones: [{ value: '(555) 123-4567', canonical: '+15551234567', type: 'Mobile' }],
+      addresses: [],
+      organizations: [],
       notes: ['Sister. Can approve purchases.'],
       groups: ['My Contacts', 'Solaris: trusted', 'Family'],
     });
@@ -265,7 +319,7 @@ describe('missing Contacts scope', () => {
     ] as const) {
       const res = await call(name, args);
       assert.ok(res.isError, name);
-      assert.match(text(res), /q@example\.com has not granted Google Contacts access/, name);
+      assert.match(text(res), /q@example\.com has not granted Google Contacts access \(contacts\)/, name);
       assert.match(text(res), /Sign in again to grant Contacts: run google_accounts_auth_start/, name);
       assert.doesNotMatch(text(res), /insufficient authentication scopes/, name);
     }
@@ -306,5 +360,222 @@ describe('phoneMatches', () => {
     assert.ok(phoneMatches('447700900123', { value: '07700 900123', canonicalForm: '+447700900123' }));
     assert.ok(!phoneMatches('7700900123', { value: '07700 900123', canonicalForm: '+447700900123' }));
     assert.ok(!phoneMatches('5551234567', { value: '' }));
+  });
+});
+
+describe('google_contacts_create', () => {
+  it('creates a contact with every field and returns it', async () => {
+    const res = data(await call('google_contacts_create', {
+      given_name: ' Erin ', family_name: 'Ellis',
+      emails: ['erin@example.com', { value: 'erin@work.example', type: 'work' }],
+      phones: [{ value: '+1 555 000 1111', type: 'mobile' }],
+      addresses: ['1 Main St\nSpringfield, IL'],
+      organization: { company: 'Smile Dental', title: 'Office manager' },
+      notes: 'Dentist office front desk.',
+      labels: ['Family'],
+    }));
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].path, '/v1/people:createContact');
+    assert.deepEqual(writes[0].body, {
+      names: [{ givenName: 'Erin', familyName: 'Ellis' }],
+      emailAddresses: [{ value: 'erin@example.com' }, { value: 'erin@work.example', type: 'work' }],
+      phoneNumbers: [{ value: '+1 555 000 1111', type: 'mobile' }],
+      addresses: [{ formattedValue: '1 Main St\nSpringfield, IL' }],
+      organizations: [{ name: 'Smile Dental', title: 'Office manager' }],
+      biographies: [{ value: 'Dentist office front desk.', contentType: 'TEXT_PLAIN' }],
+      memberships: [
+        { contactGroupMembership: { contactGroupResourceName: 'contactGroups/family' } },
+        { contactGroupMembership: { contactGroupResourceName: 'contactGroups/myContacts' } },
+      ],
+    });
+    assert.equal(res.contact.resource_name, 'people/new');
+    assert.deepEqual(res.contact.organizations, [{ company: 'Smile Dental', title: 'Office manager' }]);
+    assert.deepEqual(res.contact.groups, ['Family', 'My Contacts']);
+  });
+
+  it('refuses a protected label, in any letter case, and creates nothing', async () => {
+    const res = await call('google_contacts_create', { given_name: 'Mallory', emails: ['m@evil.example'], labels: ['Solaris: trusted'] });
+    assert.ok(res.isError);
+    assert.match(text(res), /Can't add a new contact to "Solaris: trusted"\. Nothing was created\./);
+    process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = 'family';
+    assert.match(text(await call('google_contacts_create', { given_name: 'Mallory', labels: ['Family'] })), /Can't add a new contact to "Family"/);
+    process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = 'My Contacts';
+    assert.match(text(await call('google_contacts_create', { given_name: 'Mallory' })), /always joins "My Contacts"\. Nothing was created\./);
+    assert.deepEqual(writes, []);
+  });
+
+  it('validates input before calling Google', async () => {
+    assert.match(text(await call('google_contacts_create', {})), /at least a name, an email or a phone/);
+    assert.match(text(await call('google_contacts_create', { emails: ['nope'] })), /not an email address/);
+    assert.match(text(await call('google_contacts_create', { phones: ['x'] })), /not a phone number/);
+    assert.match(text(await call('google_contacts_create', { emails: 'a@b.c' })), /must be a list/);
+    assert.match(text(await call('google_contacts_create', { emails: Array(51).fill('a@b.c') })), /more than 50/);
+    assert.match(text(await call('google_contacts_create', { given_name: 'A', organization: 'Acme' })), /organization must be an object/);
+    assert.match(text(await call('google_contacts_create', { given_name: 'A', labels: 'Family' })), /labels must be a list/);
+    assert.deepEqual(requests, []);
+    assert.match(text(await call('google_contacts_create', { given_name: 'A', labels: ['Nope'] })), /No contact label named "Nope"\. Nothing was created\./);
+    assert.deepEqual(writes, []);
+  });
+});
+
+describe('google_contacts_update', () => {
+  it('changes only the fields passed, with the current etag', async () => {
+    const res = data(await call('google_contacts_update', { resource_name: 'people/c4', family_name: 'Dunn', notes: 'Neighbor.' }));
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].path, '/v1/people/c4:updateContact');
+    assert.equal(writes[0].params.updatePersonFields, 'names,biographies');
+    assert.deepEqual(writes[0].body, {
+      etag: 'etag-1',
+      metadata: { sources: [{ type: 'CONTACT', id: 'src', etag: 'src-1' }] },
+      names: [{ familyName: 'Dunn' }],
+      biographies: [{ value: 'Neighbor.', contentType: 'TEXT_PLAIN' }],
+    });
+    assert.deepEqual(res.contact.notes, ['Neighbor.']);
+  });
+
+  it('keeps the contact name\'s other parts and sends a single name, ignoring a linked profile\'s', async () => {
+    people[3].names = [
+      { displayName: 'Daniel Doe', givenName: 'Daniel', familyName: 'Doe', metadata: { primary: true, source: { type: 'PROFILE' } } },
+      { displayName: 'Dr. Dan M. Doe', givenName: 'Dan', middleName: 'M.', familyName: 'Doe', honorificPrefix: 'Dr.', unstructuredName: 'Dr. Dan M. Doe', metadata: { source: { type: 'CONTACT' } } },
+    ];
+    try {
+      await call('google_contacts_update', { resource_name: 'people/c4', family_name: 'Dunn' });
+      assert.deepEqual(writes[0].body.names, [{ givenName: 'Dan', middleName: 'M.', familyName: 'Dunn', honorificPrefix: 'Dr.' }]);
+    } finally {
+      people[3].names = [{ displayName: 'Dan Doe' }];
+    }
+  });
+
+  it('replaces a list and clears notes with an empty string', async () => {
+    await call('google_contacts_update', { resource_name: 'people/c4', emails: ['dan@example.com'], phones: [], notes: '' });
+    assert.equal(writes[0].params.updatePersonFields, 'emailAddresses,phoneNumbers,biographies');
+    assert.deepEqual(writes[0].body.phoneNumbers, []);
+    assert.deepEqual(writes[0].body.biographies, []);
+  });
+
+  it('refuses to change the emails or phones of a contact on a protected label', async () => {
+    for (const args of [{ emails: ['alice@new.example'] }, { phones: ['555 999 0000'] }, { emails: [], given_name: 'Al' }]) {
+      const res = await call('google_contacts_update', { resource_name: 'people/c2', ...args });
+      assert.ok(res.isError);
+      assert.match(text(res), /on "Solaris: trusted", so its (emails|phones) can't be changed\. Nothing was saved\./);
+      assert.match(text(res), /only the account owner changes them/);
+    }
+    assert.deepEqual(writes, []);
+  });
+
+  it('still edits names and notes of a contact on a protected label', async () => {
+    data(await call('google_contacts_update', { resource_name: 'people/c2', notes: 'Kid\'s soccer coach.' }));
+    assert.equal(writes[0].params.updatePersonFields, 'biographies');
+  });
+
+  it('honors GOOGLE_CONTACTS_PROTECTED_LABELS', async () => {
+    process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = '';
+    data(await call('google_contacts_update', { resource_name: 'people/c2', emails: ['bob@new.example'] }));
+    assert.equal(writes.length, 1);
+    process.env.GOOGLE_CONTACTS_PROTECTED_LABELS = 'Other, family';
+    assert.ok((await call('google_contacts_update', { resource_name: 'people/c1', phones: [] })).isError);
+    assert.equal(writes.length, 1);
+  });
+
+  it('reports a contact changed in the meantime', async () => {
+    const original = people[3];
+    const proto = Object.getPrototypeOf(new google.auth.OAuth2().transporter);
+    const stale = mock.method(proto, 'request', async (opts: { url?: string; method?: string }) => {
+      const res = await fakeTransport(opts);
+      if ((opts.method ?? 'GET') === 'GET' && String(opts.url).endsWith('/people/c4')) (res.data as { etag: string }).etag = 'old';
+      return res;
+    });
+    try {
+      const res = await call('google_contacts_update', { resource_name: 'people/c4', notes: 'x' });
+      assert.ok(res.isError);
+      assert.match(text(res), /changed while it was being updated, so nothing was saved/);
+    } finally {
+      stale.mock.restore();
+      people[3] = original;
+    }
+  });
+
+  it('validates input before calling Google', async () => {
+    assert.match(text(await call('google_contacts_update', { resource_name: 'c4', notes: 'x' })), /resource_name/);
+    assert.match(text(await call('google_contacts_update', { resource_name: 'people/c4' })), /Nothing to update/);
+    assert.deepEqual(requests, []);
+  });
+});
+
+describe('google_contacts_delete', () => {
+  it('deletes a contact', async () => {
+    const res = data(await call('google_contacts_delete', { resource_name: 'people/c4' }));
+    assert.deepEqual(writes.map((w) => `${w.method} ${w.path}`), ['DELETE /v1/people/c4:deleteContact']);
+    assert.equal(res.deleted.resource_name, 'people/c4');
+  });
+
+  it('refuses to delete a contact on a protected label', async () => {
+    const res = await call('google_contacts_delete', { resource_name: 'people/c3' });
+    assert.match(text(res), /on "Solaris: trusted", so it can't be deleted/);
+    assert.deepEqual(writes, []);
+  });
+});
+
+describe('google_contacts_create_label', () => {
+  it('creates a label', async () => {
+    const res = data(await call('google_contacts_create_label', { name: ' Dentists ' }));
+    assert.deepEqual(writes[0].body, { contactGroup: { name: 'Dentists' } });
+    assert.deepEqual(res.label, { name: 'Dentists', resource_name: 'contactGroups/new' });
+  });
+
+  it('refuses a protected name in any letter case, and an existing name', async () => {
+    for (const name of ['Solaris: trusted', ' SOLARIS: TRUSTED ']) {
+      assert.match(text(await call('google_contacts_create_label', { name })), /Can't create a label named/);
+    }
+    assert.match(text(await call('google_contacts_create_label', { name: 'family' })), /already exists \(contactGroups\/family\)/);
+    assert.deepEqual(writes, []);
+  });
+});
+
+describe('google_contacts_update_label_members', () => {
+  it('adds and removes members and reports unknown contacts', async () => {
+    const res = data(await call('google_contacts_update_label_members', { label: 'Family', add: ['people/c4', 'people/zz'], remove: ['people/c1'] }));
+    assert.equal(writes[0].path, '/v1/contactGroups/family/members:modify');
+    assert.deepEqual(writes[0].body, { resourceNamesToAdd: ['people/c4', 'people/zz'], resourceNamesToRemove: ['people/c1'] });
+    assert.deepEqual(res.added, ['people/c4']);
+    assert.deepEqual(res.removed, ['people/c1']);
+    assert.deepEqual(res.not_found, ['people/zz']);
+  });
+
+  it('refuses a protected label, by name or resource name', async () => {
+    for (const label of ['Solaris: trusted', 'contactGroups/trusted']) {
+      for (const change of [{ add: ['people/c4'] }, { remove: ['people/c2'] }]) {
+        const res = await call('google_contacts_update_label_members', { label, ...change });
+        assert.match(text(res), /Can't change who is on "Solaris: trusted"\. Nothing was changed\./);
+      }
+    }
+    assert.deepEqual(writes, []);
+  });
+
+  it('validates input before changing anything', async () => {
+    assert.match(text(await call('google_contacts_update_label_members', { label: 'Family' })), /add or remove/);
+    assert.match(text(await call('google_contacts_update_label_members', { label: 'Family', add: ['c4'] })), /resource names/);
+    assert.match(text(await call('google_contacts_update_label_members', { label: 'Family', add: ['people/c4'], remove: ['people/c4'] })), /In both add and remove/);
+    assert.deepEqual(requests, []);
+    assert.match(text(await call('google_contacts_update_label_members', { label: 'family', add: ['people/c4'] })), /No contact label named "family"/);
+    assert.deepEqual(writes, []);
+  });
+});
+
+describe('write scope missing', () => {
+  it('tells the caller to sign in again to allow changes, for every write tool', async () => {
+    writeScopeMissing = true;
+    for (const [name, args] of [
+      ['google_contacts_create', { given_name: 'A' }],
+      ['google_contacts_update', { resource_name: 'people/c4', notes: 'x' }],
+      ['google_contacts_delete', { resource_name: 'people/c4' }],
+      ['google_contacts_create_label', { name: 'New' }],
+      ['google_contacts_update_label_members', { label: 'Family', add: ['people/c4'] }],
+    ] as const) {
+      const res = await call(name, { ...args, account_email: 'q@example.com' });
+      assert.ok(res.isError, name);
+      assert.match(text(res), /q@example\.com has not granted permission to change Google Contacts \(contacts\)/, name);
+      assert.match(text(res), /Sign in again to grant Contacts/, name);
+    }
   });
 });
