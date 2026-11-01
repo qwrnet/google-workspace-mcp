@@ -83,7 +83,7 @@ function describeError(err: unknown, auth: OAuth2Client, requested: string | und
     const who = email ?? 'This account';
     const client = acct ? ` with client "${acct.client}"` : '';
     return error(
-      `${who} has not granted Google Contacts access (contacts.readonly); it was signed in before the server asked for it. ` +
+      `${who} has not granted Google Contacts access (contacts.readonly); it was signed in before the server asked for Contacts, or the permission was left unchecked. ` +
       `Sign in again to grant Contacts: run google_accounts_auth_start${client} and sign in as ${email ?? 'that account'}, ` +
       'then accept the Contacts permission on the consent screen.',
     );
