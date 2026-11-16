@@ -133,7 +133,7 @@ Each entry is either inline credentials or a `file` pointing at the JSON downloa
 | `google_drive_copy` | Copy a file |
 | `google_drive_move` | Move a file to a different folder |
 | `google_drive_search` | Full-text search across Drive |
-| `google_drive_share` | Share a file with a user |
+| `google_drive_share` | Share a file with a user, group, domain, or anyone with the link (`type`: `user` default, `group`, `domain`, `anyone`) |
 | `google_drive_unshare` | Remove a sharing permission |
 | `google_drive_get_permissions` | List file permissions |
 | `google_drive_export` | Export to a specific format (PDF, CSV, etc.) |

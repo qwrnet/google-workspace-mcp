@@ -22,6 +22,87 @@ function clampPageSize(value: unknown, defaultSize: number): number {
   return Math.min(Math.max(1, n), 1000);
 }
 
+const PERMISSION_FIELDS = 'id,role,type,emailAddress,domain,allowFileDiscovery';
+
+const SHARE_ROLES = ['reader', 'commenter', 'writer'] as const;
+const SHARE_TYPES = ['user', 'group', 'domain', 'anyone'] as const;
+type ShareType = (typeof SHARE_TYPES)[number];
+
+export interface SharePermissionRequest {
+  requestBody: {
+    role: string;
+    type: ShareType;
+    emailAddress?: string;
+    domain?: string;
+    allowFileDiscovery?: boolean;
+  };
+  sendNotificationEmail?: boolean;
+}
+
+function optionalString(args: Record<string, unknown>, key: string): string | undefined | { error: string } {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string') return { error: `${key} must be a string` };
+  const t = v.trim();
+  return t === '' ? undefined : t;
+}
+
+function optionalBoolean(args: Record<string, unknown>, key: string): boolean | undefined | { error: string } {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'boolean') return { error: `${key} must be a boolean` };
+  return v;
+}
+
+/**
+ * Builds the permissions.create request for google_drive_share, sending only the
+ * fields the Drive API accepts for the permission type. Returns an error message
+ * when the arguments do not fit the type.
+ */
+export function buildSharePermission(args: Record<string, unknown>): SharePermissionRequest | string {
+  const role = args.role;
+  if (role === undefined || role === null || role === '') return 'Missing required parameter: role';
+  if (typeof role !== 'string' || !(SHARE_ROLES as readonly string[]).includes(role)) {
+    return `role must be one of: ${SHARE_ROLES.join(', ')}`;
+  }
+
+  const rawType = args.type ?? 'user';
+  if (typeof rawType !== 'string' || !(SHARE_TYPES as readonly string[]).includes(rawType)) {
+    return `type must be one of: ${SHARE_TYPES.join(', ')}`;
+  }
+  const type = rawType as ShareType;
+
+  const email = optionalString(args, 'email');
+  const domain = optionalString(args, 'domain');
+  const discovery = optionalBoolean(args, 'allow_file_discovery');
+  const notify = optionalBoolean(args, 'send_notification');
+  for (const v of [email, domain, discovery, notify]) {
+    if (typeof v === 'object') return v.error;
+  }
+
+  if (type === 'user' || type === 'group') {
+    if (!email) return `Missing required parameter: email (required for type "${type}")`;
+    if (domain !== undefined) return `domain is only allowed for type "domain", not "${type}"`;
+    if (discovery === true) return `allow_file_discovery is only allowed for type "anyone" or "domain", not "${type}"`;
+    return {
+      requestBody: { role, type, emailAddress: email as string },
+      sendNotificationEmail: (notify as boolean | undefined) ?? false,
+    };
+  }
+
+  if (email !== undefined) return `email is not allowed for type "${type}"`;
+  if (notify === true) return `send_notification is only allowed for type "user" or "group", not "${type}"`;
+  const allowFileDiscovery = (discovery as boolean | undefined) ?? false;
+
+  if (type === 'domain') {
+    if (!domain) return 'Missing required parameter: domain (required for type "domain")';
+    return { requestBody: { role, type, domain: domain as string, allowFileDiscovery } };
+  }
+
+  if (domain !== undefined) return 'domain is only allowed for type "domain", not "anyone"';
+  return { requestBody: { role, type, allowFileDiscovery } };
+}
+
 export const tools: Tool[] = [
   {
     name: 'google_drive_list',
@@ -283,7 +364,9 @@ export const tools: Tool[] = [
   },
   {
     name: 'google_drive_share',
-    description: 'Share a file with a user by email',
+    description:
+      'Share a file with a user, a group, everyone in a domain, or anyone with the link. ' +
+      'type "user" or "group" needs email; type "domain" needs domain; type "anyone" (link sharing) takes neither.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -291,25 +374,40 @@ export const tools: Tool[] = [
           type: 'string',
           description: 'The ID of the file to share',
         },
-        email: {
-          type: 'string',
-          description: 'Email address to share with',
-        },
         role: {
           type: 'string',
-          enum: ['reader', 'writer', 'commenter'],
+          enum: [...SHARE_ROLES],
           description: 'Permission role to grant',
         },
         type: {
           type: 'string',
-          description: 'Permission type (default: user)',
+          enum: [...SHARE_TYPES],
+          description:
+            'Who the permission is for (default: user). "anyone" makes the file viewable by anyone with the link.',
+        },
+        email: {
+          type: 'string',
+          description: 'Email address of the user or group. Required for type "user" and "group"; not allowed otherwise.',
+        },
+        domain: {
+          type: 'string',
+          description: 'Domain to share with (e.g. "example.com"). Required for type "domain"; not allowed otherwise.',
+        },
+        allow_file_discovery: {
+          type: 'boolean',
+          description:
+            'For type "anyone" or "domain" only (true is rejected for other types): whether the file can be found by search rather than only through its link (default: false).',
+        },
+        send_notification: {
+          type: 'boolean',
+          description: 'For type "user" or "group" only (true is rejected for other types): whether to email the recipient about the share (default: false).',
         },
         account_email: {
           type: 'string',
           description: ACCOUNT_EMAIL_DESCRIPTION,
         },
       },
-      required: ['file_id', 'email', 'role'],
+      required: ['file_id', 'role'],
     },
   },
   {
@@ -641,23 +739,18 @@ export function register(
 
   // --- google_drive_share ---
   handleCall('google_drive_share', async (args) => {
+    const fileId = args.file_id as string | undefined;
+    if (!fileId) return error('Missing required parameter: file_id');
+    const request = buildSharePermission(args);
+    if (typeof request === 'string') return error(request);
+
     const auth = await getAuth(args.account_email as string | undefined);
     const drive = google.drive({ version: 'v3', auth });
-    const fileId = args.file_id as string | undefined;
-    const email = args.email as string | undefined;
-    const role = args.role as string | undefined;
-    if (!fileId) return error('Missing required parameter: file_id');
-    if (!email) return error('Missing required parameter: email');
-    if (!role) return error('Missing required parameter: role');
-
     const res = await drive.permissions.create({
       fileId,
-      requestBody: {
-        role,
-        type: (args.type as string | undefined) || 'user',
-        emailAddress: email,
-      },
-      fields: 'id,role,type,emailAddress',
+      requestBody: request.requestBody,
+      ...(request.sendNotificationEmail === undefined ? {} : { sendNotificationEmail: request.sendNotificationEmail }),
+      fields: PERMISSION_FIELDS,
     });
 
     return json(res.data);
@@ -686,7 +779,7 @@ export function register(
 
     const res = await drive.permissions.list({
       fileId,
-      fields: 'permissions(id,role,type,emailAddress,displayName)',
+      fields: `permissions(${PERMISSION_FIELDS},displayName)`,
     });
 
     return json(res.data);
