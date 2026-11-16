@@ -83,7 +83,7 @@ export function buildSharePermission(args: Record<string, unknown>): SharePermis
   if (type === 'user' || type === 'group') {
     if (!email) return `Missing required parameter: email (required for type "${type}")`;
     if (domain !== undefined) return `domain is only allowed for type "domain", not "${type}"`;
-    if (discovery !== undefined) return `allow_file_discovery is only allowed for type "anyone" or "domain", not "${type}"`;
+    if (discovery === true) return `allow_file_discovery is only allowed for type "anyone" or "domain", not "${type}"`;
     return {
       requestBody: { role, type, emailAddress: email as string },
       sendNotificationEmail: (notify as boolean | undefined) ?? false,
@@ -91,7 +91,7 @@ export function buildSharePermission(args: Record<string, unknown>): SharePermis
   }
 
   if (email !== undefined) return `email is not allowed for type "${type}"`;
-  if (notify !== undefined) return `send_notification is only allowed for type "user" or "group", not "${type}"`;
+  if (notify === true) return `send_notification is only allowed for type "user" or "group", not "${type}"`;
   const allowFileDiscovery = (discovery as boolean | undefined) ?? false;
 
   if (type === 'domain') {
@@ -396,11 +396,11 @@ export const tools: Tool[] = [
         allow_file_discovery: {
           type: 'boolean',
           description:
-            'For type "anyone" or "domain" only: whether the file can be found by search rather than only through its link (default: false).',
+            'For type "anyone" or "domain" only (true is rejected for other types): whether the file can be found by search rather than only through its link (default: false).',
         },
         send_notification: {
           type: 'boolean',
-          description: 'For type "user" or "group" only: whether to email the recipient about the share (default: false).',
+          description: 'For type "user" or "group" only (true is rejected for other types): whether to email the recipient about the share (default: false).',
         },
         account_email: {
           type: 'string',

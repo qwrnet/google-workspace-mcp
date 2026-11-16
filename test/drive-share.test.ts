@@ -86,6 +86,16 @@ describe('buildSharePermission', () => {
     });
   });
 
+  it('accepts a flag set to false for a type it does not apply to', () => {
+    assert.deepEqual(buildSharePermission({ role: 'reader', type: 'anyone', send_notification: false }), {
+      requestBody: { role: 'reader', type: 'anyone', allowFileDiscovery: false },
+    });
+    assert.deepEqual(buildSharePermission({ role: 'reader', email: 'a@example.com', allow_file_discovery: false }), {
+      requestBody: { role: 'reader', type: 'user', emailAddress: 'a@example.com' },
+      sendNotificationEmail: false,
+    });
+  });
+
   const rejects: Array<[string, Record<string, unknown>, RegExp]> = [
     ['user without email', { role: 'reader' }, /email/],
     ['user with blank email', { role: 'reader', email: '  ' }, /email/],
@@ -97,7 +107,7 @@ describe('buildSharePermission', () => {
     ['domain with send_notification', { role: 'reader', type: 'domain', domain: 'example.com', send_notification: true }, /send_notification/],
     ['anyone with email', { role: 'reader', type: 'anyone', email: 'a@example.com' }, /email/],
     ['anyone with domain', { role: 'reader', type: 'anyone', domain: 'example.com' }, /domain/],
-    ['anyone with send_notification', { role: 'reader', type: 'anyone', send_notification: false }, /send_notification/],
+    ['anyone with send_notification', { role: 'reader', type: 'anyone', send_notification: true }, /send_notification/],
     ['unknown type', { role: 'reader', type: 'everyone' }, /type must be one of/],
     ['missing role', { type: 'anyone' }, /role/],
     ['unknown role', { role: 'owner', type: 'anyone' }, /role must be one of/],
