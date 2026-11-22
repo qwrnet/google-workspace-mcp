@@ -2,7 +2,6 @@ enabled: true
 block_on: [P0, P1]
 min_confidence: 4
 owner_only: warn
-effort: medium
 jev: true
 boundary_paths:
   - src/auth/
