@@ -1,0 +1,20 @@
+enabled: true
+block_on: [P0, P1]
+min_confidence: 4
+owner_only: warn
+effort: medium
+jev: true
+boundary_paths:
+  - src/auth/
+  - src/util/token-helper.ts
+instructions: |
+  This repository builds google-workspace-mcp, an MCP server that gives AI agents tools for Google
+  Drive, Sheets, Docs, Gmail, Calendar, Slides, Groups and Contacts across several Google accounts.
+  Agents are its main consumers. Pay extra attention to: OAuth tokens, refresh tokens, client
+  secrets or authorization codes reaching logs, error messages or tool output; token files under
+  ~/.google-mcp-accounts/ being written with permissions wider than the owner's; a call silently
+  acting as a different account than the one requested; requested OAuth scopes widening without
+  need; tools that send mail, share files, delete or overwrite data doing more than their
+  arguments ask (wider sharing, extra recipients, broader deletes); tool schemas or descriptions
+  changed without matching README updates; and tests that could reach real Google APIs instead of
+  fakes.
