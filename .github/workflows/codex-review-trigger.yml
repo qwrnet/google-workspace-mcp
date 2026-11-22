@@ -1,0 +1,113 @@
+name: Codex review trigger
+
+# For a public repository: copy to .github/workflows/codex-review-trigger.yml instead of
+# templates/codex-review-trigger.yml. GitHub does not let a public repository use an action or a
+# reusable workflow from a private repository, so this carries the
+# qwrnet/actions/codex-review-trigger action's step inline, and the reusable workflow's `if`.
+# Keep both identical (a test in qwrnet/actions checks the template); when they change, copy this
+# file again. Public repositories run it on a GitHub-hosted runner, which is free for them, and
+# self-hosted runners never serve public repositories.
+#
+# Asks the central gate in qwrnet/actions to review ready pull requests into the default branch
+# (it posts the required `codex-review` check, a summary comment and inline findings), and to wake
+# the runner VM for CI on drafts and pushes to the default branch. A trusted reply in a review
+# thread asks the gate to re-check its findings.
+#
+# This only names the pull request. It never checks out or runs the pull request's code, and a
+# fork's pull request gets no secret, so it is not dispatched (the owner reviews those).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  # A trusted reply in a thread (a tracker issue for a finding, say) re-checks the gate's check.
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: >-
+      (github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      (github.event.action != 'edited' || github.event.changes.base != null)) ||
+      (github.event_name == 'pull_request_review_comment' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch &&
+      github.event.comment.in_reply_to_id &&
+      (github.event.repository.private ||
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Decide and dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_REVIEW_DISPATCH_TOKEN }}
+          CHECK_NAME: codex-review
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF: ${{ github.ref }}
+          PR: ${{ github.event.pull_request.number }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          BASE_CHANGED: ${{ github.event.changes.base != null }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          IN_REPLY_TO: ${{ github.event.comment.in_reply_to_id }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENTER_ROLE: ${{ github.event.comment.author_association }}
+          # Only people with access comment in a private repository; whose word counts is the gate's to check
+          # (a private org member's association reads as a contributor's here, QWR-708).
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          mode=""
+          case "$EVENT" in
+            push)
+              # CI on a push to the default branch (a merge, say) runs on the VM with no review.
+              [ "$REF" = "refs/heads/$DEFAULT_BRANCH" ] && mode=wake ;;
+            pull_request|pull_request_review_comment)
+              if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+                echo "A fork's pull request: not dispatched (the owner reviews those)."
+              elif [ "$BASE" != "$DEFAULT_BRANCH" ]; then
+                echo "Into $BASE, not $DEFAULT_BRANCH: the gate does not review it."
+              elif [ "$EVENT" = "pull_request_review_comment" ]; then
+                # A reply in a thread may link (or, deleted, unlink) a tracker issue for one of the
+                # gate's findings: it re-checks its latest check against the threads (no new review).
+                if [ -z "$IN_REPLY_TO" ] || [ "$COMMENTER" = "qwrnet-codex-review[bot]" ]; then
+                  echo "Not a reply in a thread: nothing to do."
+                elif [ "$REPO_PRIVATE" != "true" ] && [ "$COMMENTER_ROLE" != OWNER ] && [ "$COMMENTER_ROLE" != MEMBER ] && [ "$COMMENTER_ROLE" != COLLABORATOR ] && [ "$COMMENTER_ROLE" != CONTRIBUTOR ]; then
+                  echo "A reply from outside the repository: the gate does not act on it."
+                elif [ "$DRAFT" = "true" ]; then
+                  echo "A draft: the gate does not review it."
+                else
+                  mode=settle
+                fi
+              elif [ "$ACTION" = "edited" ] && [ "$BASE_CHANGED" != "true" ]; then
+                echo "Only the title or description changed: nothing to do."
+              elif [ "$DRAFT" = "true" ]; then
+                # Drafts are not reviewed, but their CI still needs the VM.
+                mode=wake
+              else
+                mode=review
+              fi ;;
+          esac
+          if [ -z "$mode" ]; then
+            echo "Nothing to dispatch."
+            exit 0
+          fi
+          args=(-R qwrnet/actions --ref main -f repo="$REPO_NAME" -f mode="$mode")
+          if [ "$mode" = review ] || [ "$mode" = settle ]; then
+            [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "No pull request number"; exit 1; }
+            args+=(-f pr="$PR" -f check_name="$CHECK_NAME")
+          elif [[ "$PR" =~ ^[1-9][0-9]*$ ]]; then
+            args+=(-f pr="$PR")
+          fi
+          gh workflow run codex-review.yml "${args[@]}"
+          echo "Dispatched $mode for $REPO_NAME${PR:+#$PR}: https://github.com/qwrnet/actions/actions/workflows/codex-review.yml"
